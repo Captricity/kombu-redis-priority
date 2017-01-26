@@ -37,7 +37,7 @@ try:
 except ImportError:  # pragma: no cover
     sentinel = None  # noqa
 
-transport.TRANSPORT_ALIASES['redispriorityasync'] = 'redis_priority.transport.redis_priority_async:Transport'
+transport.TRANSPORT_ALIASES['redispriorityasync'] = 'kombu_redis_priority.transport.redis_priority_async:Transport'
 
 
 logger = get_logger('kombu.transport.redis')
