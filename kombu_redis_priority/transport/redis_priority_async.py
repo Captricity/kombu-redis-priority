@@ -1022,6 +1022,21 @@ class Channel(virtual.Channel):
         return {queue for queue in self._active_queues
                 if queue not in self.active_fanout_queues}
 
+    def _get_message_priority(self, message, reverse=False):
+        """Get priority from message.
+
+        The value is not limited!
+
+        Note:
+            Lower value has more priority.
+        """
+        try:
+            priority = int(message['properties']['priority'])
+        except (TypeError, ValueError, KeyError):
+            priority = self.default_priority
+
+        return priority
+
 
 class Transport(virtual.Transport):
     """Redis Transport."""
@@ -1076,21 +1091,6 @@ class Transport(virtual.Transport):
     def _get_errors(self):
         """Utility to import redis-py's exceptions at runtime."""
         return get_redis_error_classes()
-
-    def _get_message_priority(self, message, reverse=False):
-        """Get priority from message.
-
-        The value is not limited!
-
-        Note:
-            Lower value has more priority.
-        """
-        try:
-            priority = int(message['properties']['priority'])
-        except (TypeError, ValueError, KeyError):
-            priority = self.default_priority
-
-        return priority
 
 
 
