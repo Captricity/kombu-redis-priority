@@ -552,7 +552,7 @@ class Channel(virtual.Channel):
                     # )
 
                     # Add with priority 0 so it jumps ahead in the queue
-                    client.zadd(queue, 0, dumps(payload))
+                    client.zadd(queue, '-inf', self._add_time_prefix(dumps(payload)))
             except Exception:
                 crit('Could not restore message: %r', payload, exc_info=True)
 
@@ -740,7 +740,7 @@ class Channel(virtual.Channel):
                 if len(item) == 0:
                     item = None
                 else:
-                    item = item[0]
+                    item = self._remove_time_prefix(item[0])
 
             except self.connection_errors:
                 # if there's a ConnectionError, disconnect so the next
@@ -799,7 +799,7 @@ class Channel(virtual.Channel):
 
         with self.conn_or_acquire() as client:
             # client.lpush(self._q_for_pri(queue, pri), dumps(message))
-            client.zadd(queue, pri, dumps(message))
+            client.zadd(queue, pri, self._add_time_prefix(dumps(message)))
 
     def _put_fanout(self, exchange, message, routing_key, **kwargs):
         """Deliver fanout message."""
@@ -1036,6 +1036,13 @@ class Channel(virtual.Channel):
             priority = self.default_priority
 
         return priority
+
+    def _add_time_prefix(self, message):
+        # Add an prefix representing the current time, so that messages with the same priority have FIFO behavior
+        return '{:011d}:'.format(int(time())) + message
+
+    def _remove_time_prefix(self, message):
+        return message[12:]
 
 
 class Transport(virtual.Transport):
