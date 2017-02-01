@@ -2,5 +2,9 @@ language: python
 python:
   - "2.7"
   - "3.4"
+before_script:
+  - pip install python-coveralls coverage
 # command to run tests
-script: python setup.py test
+script: coverage run --source kombu_redis_priority setup.py test
+after_success:
+  - coveralls
