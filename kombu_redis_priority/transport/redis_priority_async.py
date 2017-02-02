@@ -451,6 +451,7 @@ class Channel(virtual.Channel):
     #:
     #: The default is to consume from queues in round robin.
     queue_order_strategy = 'round_robin'
+    empty = False
 
     _async_pool = None
     _pool = None
@@ -705,11 +706,10 @@ class Channel(virtual.Channel):
                     return True
 
     def _zrem_start(self, timeout=1):
-        queues = self._queue_cycle.consume(len(self.active_queues))
+        queues = self._queue_cycle.consume(1)
         if not queues:
             return
-        keys = [self._q_for_pri(queue, pri) for pri in self.priority_steps
-                for queue in queues] + [timeout or 0]
+
         self._in_poll = self.client.connection
         # self.client.connection.send_command('BRPOP', *keys)
 
@@ -747,16 +747,22 @@ class Channel(virtual.Channel):
                 # iteration will reconnect automatically.
                 self.client.connection.disconnect()
                 raise
+
+            # Rotate the queue
+            dest = self.queue
+            self._queue_cycle.rotate(dest)
+
             if item:
-                # dest, item = dest__item
-                # dest = bytes_to_str(dest).rsplit(self.sep, 1)[0]
-                dest = self.queue
-                self._queue_cycle.rotate(dest)
+                self.empty = False
                 self.connection._deliver(loads(bytes_to_str(item)), dest)
                 return True
             else:
                 # import traceback; traceback.print_stack()
-                sleep(1)
+                if dest == self.start_queue:
+                    if self.empty:
+                        sleep(1)
+                    else:
+                        self.empty = True
                 raise Empty()
         finally:
             self._in_poll = None
@@ -1011,6 +1017,11 @@ class Channel(virtual.Channel):
 
     def _update_queue_cycle(self):
         self._queue_cycle.update(self.active_queues)
+        queue = self._queue_cycle.consume(1)
+        if queue:
+            self.start_queue = queue[0]
+        else:
+            self.start_queue = None
 
     def _get_response_error(self):
         from redis import exceptions
