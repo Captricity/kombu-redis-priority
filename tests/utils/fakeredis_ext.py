@@ -22,7 +22,7 @@ class FakeStrictRedisWithConnection(FakeStrictRedis):
         if type == '_':
             return self._parse_pipeline_response_from_connection(connection)
         else:
-            return self._parse_command_response_from_connection(connection, tyupe)
+            return self._parse_command_response_from_connection(connection, type)
 
     def _parse_pipeline_response_from_connection(self, connection):
         """
