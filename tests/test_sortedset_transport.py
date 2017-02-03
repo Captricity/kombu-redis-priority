@@ -2,20 +2,20 @@ from __future__ import unicode_literals
 
 import unittest
 import mock
-import fakeredis
 import freezegun
 import json
 import time
 import six
 
+from .utils.fakeredis_ext import FakeStrictRedisWithConnection
 from kombu import Connection
 from kombu_redis_priority.transport.redis_priority_async import redis, Transport
 
 
 class TestSortedSetTransport(unittest.TestCase):
     def setUp(self):
-        self.faker = fakeredis.FakeStrictRedis()
-        with mock.patch.object(redis, 'StrictRedis', fakeredis.FakeStrictRedis):
+        self.faker = FakeStrictRedisWithConnection()
+        with mock.patch.object(redis, 'StrictRedis', FakeStrictRedisWithConnection):
             self.connection = self.create_connection()
             self.channel = self.connection.default_channel
 
@@ -78,3 +78,20 @@ class TestSortedSetTransport(unittest.TestCase):
         enqueued_msg, priority = next(six.iteritems(raw_queue))
         self.assertEqual(enqueued_msg, self._prefixed_message(faketime, msg))
         self.assertEqual(priority, 5.0)
+
+    def test_zrem_read(self):
+        # Add an item to create a queue
+        msg = {
+            'properties': {'delivery_tag': 'abcd'}
+        }
+        self.faker.zadd('foo', 1, self._prefixed_message(time.time(), msg))
+
+        # Make the channel pull off the foo queue
+        self.channel._active_queues.append('foo')
+        self.channel._update_queue_cycle()
+
+        # And then try the zrem pipeline
+        self.channel._zrem_start()
+        with mock.patch.object(self.channel.connection, '_deliver') as mock_deliver:
+            self.channel._zrem_read()
+            mock_deliver.assert_called_once_with(msg, 'foo')
