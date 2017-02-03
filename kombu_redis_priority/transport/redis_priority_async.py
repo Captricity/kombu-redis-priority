@@ -2,10 +2,7 @@
 from __future__ import absolute_import, unicode_literals
 
 import numbers
-import socket
-
 from bisect import bisect
-from collections import namedtuple
 from contextlib import contextmanager
 from itertools import chain
 from time import time, sleep
@@ -23,7 +20,9 @@ from kombu.utils.json import loads, dumps
 from kombu.utils.objects import cached_property
 from kombu.utils.scheduling import cycle_by_name
 from kombu.utils.url import _parse_url
-from kombu.utils.uuid import uuid
+
+from kombu.transport.redis import NO_ROUTE_ERROR, get_redis_error_classes, PRIORITY_STEPS
+from kombu.transport.redis import _after_fork_cleanup_channel, QoS
 
 import kombu.transport.virtual as virtual
 
@@ -32,30 +31,16 @@ try:
 except ImportError:  # pragma: no cover
     redis = None     # noqa
 
-try:
-    from redis import sentinel
-except ImportError:  # pragma: no cover
-    sentinel = None  # noqa
 
 transport.TRANSPORT_ALIASES['redispriorityasync'] = 'kombu_redis_priority.transport.redis_priority_async:Transport'
 
 
-logger = get_logger('kombu.transport.redis')
+logger = get_logger('kombu.transport.redis_priority')
 crit, warn = logger.critical, logger.warn
 
 DEFAULT_PORT = 6379
 DEFAULT_DB = 0
 
-PRIORITY_STEPS = [0, 3, 6, 9]
-
-error_classes_t = namedtuple('error_classes_t', (
-    'connection_errors', 'channel_errors',
-))
-
-NO_ROUTE_ERROR = """
-Cannot route message for exchange {0!r}: Table empty or key no longer exists.
-Probably the key ({1!r}) has been removed from the Redis database.
-"""
 
 # This implementation may seem overly complex, but I assure you there is
 # a good reason for doing it this way.
@@ -70,165 +55,6 @@ Probably the key ({1!r}) has been removed from the Redis database.
 # Also it means we can easily use PUBLISH/SUBSCRIBE to do fanout
 # exchanges (broadcast), as an alternative to pushing messages to fanout-bound
 # queues manually.
-
-
-def get_redis_error_classes():
-    """Return tuple of redis error classes."""
-    from redis import exceptions
-    # This exception suddenly changed name between redis-py versions
-    if hasattr(exceptions, 'InvalidData'):
-        DataError = exceptions.InvalidData
-    else:
-        DataError = exceptions.DataError
-    return error_classes_t(
-        (virtual.Transport.connection_errors + (
-            InconsistencyError,
-            socket.error,
-            IOError,
-            OSError,
-            exceptions.ConnectionError,
-            exceptions.AuthenticationError,
-            exceptions.TimeoutError)),
-        (virtual.Transport.channel_errors + (
-            DataError,
-            exceptions.InvalidResponse,
-            exceptions.ResponseError)),
-    )
-
-
-def get_redis_ConnectionError():
-    """Return the redis ConnectionError exception class."""
-    from redis import exceptions
-    return exceptions.ConnectionError
-
-
-class MutexHeld(Exception):
-    """Raised when another party holds the lock."""
-
-
-@contextmanager
-def Mutex(client, name, expire):
-    """The Redis lock implementation (probably shaky)."""
-    lock_id = uuid()
-    i_won = client.setnx(name, lock_id)
-    try:
-        if i_won:
-            client.expire(name, expire)
-            yield
-        else:
-            if not client.ttl(name):
-                client.expire(name, expire)
-            raise MutexHeld()
-    finally:
-        if i_won:
-            try:
-                with client.pipeline(True) as pipe:
-                    pipe.watch(name)
-                    if pipe.get(name) == lock_id:
-                        pipe.multi()
-                        pipe.delete(name)
-                        pipe.execute()
-                    pipe.unwatch()
-            except redis.WatchError:
-                pass
-
-
-def _after_fork_cleanup_channel(channel):
-    channel._after_fork()
-
-
-class QoS(virtual.QoS):
-    """Redis Ack Emulation."""
-
-    restore_at_shutdown = True
-
-    def __init__(self, *args, **kwargs):
-        super(QoS, self).__init__(*args, **kwargs)
-        self._vrestore_count = 0
-
-    def append(self, message, delivery_tag):
-        delivery = message.delivery_info
-        EX, RK = delivery['exchange'], delivery['routing_key']
-        with self.pipe_or_acquire() as pipe:
-            pipe.zadd(self.unacked_index_key, time(), delivery_tag) \
-                .hset(self.unacked_key, delivery_tag,
-                      dumps([message._raw, EX, RK])) \
-                .execute()
-            super(QoS, self).append(message, delivery_tag)
-
-    def restore_unacked(self, client=None):
-        with self.channel.conn_or_acquire(client) as client:
-            for tag in self._delivered:
-                self.restore_by_tag(tag, client=client)
-        self._delivered.clear()
-
-    def ack(self, delivery_tag):
-        self._remove_from_indices(delivery_tag).execute()
-        super(QoS, self).ack(delivery_tag)
-
-    def reject(self, delivery_tag, requeue=False):
-        if requeue:
-            self.restore_by_tag(delivery_tag, leftmost=True)
-        self.ack(delivery_tag)
-
-    @contextmanager
-    def pipe_or_acquire(self, pipe=None, client=None):
-        if pipe:
-            yield pipe
-        else:
-            with self.channel.conn_or_acquire(client) as client:
-                yield client.pipeline()
-
-    def _remove_from_indices(self, delivery_tag, pipe=None):
-        with self.pipe_or_acquire(pipe) as pipe:
-            return pipe.zrem(self.unacked_index_key, delivery_tag) \
-                       .hdel(self.unacked_key, delivery_tag)
-
-    def restore_visible(self, start=0, num=10, interval=10):
-        self._vrestore_count += 1
-        if (self._vrestore_count - 1) % interval:
-            return
-        with self.channel.conn_or_acquire() as client:
-            ceil = time() - self.visibility_timeout
-            try:
-                with Mutex(client, self.unacked_mutex_key,
-                           self.unacked_mutex_expire):
-                    visible = client.zrevrangebyscore(
-                        self.unacked_index_key, ceil, 0,
-                        start=num and start, num=num, withscores=True)
-                    for tag, score in visible or []:
-                        self.restore_by_tag(tag, client)
-            except MutexHeld:
-                pass
-
-    def restore_by_tag(self, tag, client=None, leftmost=False):
-        with self.channel.conn_or_acquire(client) as client:
-            with client.pipeline() as pipe:
-                p, _, _ = self._remove_from_indices(
-                    tag, pipe.hget(self.unacked_key, tag)).execute()
-            if p:
-                M, EX, RK = loads(bytes_to_str(p))  # json is unicode
-                self.channel._do_restore_message(M, EX, RK, client, leftmost)
-
-    @cached_property
-    def unacked_key(self):
-        return self.channel.unacked_key
-
-    @cached_property
-    def unacked_index_key(self):
-        return self.channel.unacked_index_key
-
-    @cached_property
-    def unacked_mutex_key(self):
-        return self.channel.unacked_mutex_key
-
-    @cached_property
-    def unacked_mutex_expire(self):
-        return self.channel.unacked_mutex_expire
-
-    @cached_property
-    def visibility_timeout(self):
-        return self.channel.visibility_timeout
 
 
 class MultiChannelPoller(object):
@@ -711,7 +537,6 @@ class Channel(virtual.Channel):
             return
 
         self._in_poll = self.client.connection
-        # self.client.connection.send_command('BRPOP', *keys)
 
         pipe = self.client.pipeline()
         queue = queues[0]
@@ -728,14 +553,10 @@ class Channel(virtual.Channel):
     def _zrem_read(self, **options):
         try:
             try:
-                # dest__item = self.client.parse_response(self.client.connection,
-                #                                         'BRPOP',
-                #                                         **options)
                 # We only care about the last output
                 output = None
                 for i in range(0, 4):
                     output = self.client.parse_response(self.client.connection, '_', **options)
-                # print('Output:{}'.format(output))
                 item = output[0]
                 if len(item) == 0:
                     item = None
@@ -757,7 +578,6 @@ class Channel(virtual.Channel):
                 self.connection._deliver(loads(bytes_to_str(item)), dest)
                 return True
             else:
-                # import traceback; traceback.print_stack()
                 if dest == self.start_queue:
                     if self.empty:
                         sleep(1)
@@ -785,7 +605,6 @@ class Channel(virtual.Channel):
         with self.conn_or_acquire() as client:
             with client.pipeline() as pipe:
                 for pri in self.priority_steps:
-                    # pipe = pipe.llen(self._q_for_pri(queue, pri))
                     pipe = pipe.zcount(self._q_for_pri(queue, pri), '-inf', '+inf')
                 sizes = pipe.execute()
                 return sum(size for size in sizes
@@ -804,7 +623,6 @@ class Channel(virtual.Channel):
         pri = self._get_message_priority(message, reverse=False)
 
         with self.conn_or_acquire() as client:
-            # client.lpush(self._q_for_pri(queue, pri), dumps(message))
             client.zadd(queue, pri, self._add_time_prefix(dumps(message)))
 
     def _put_fanout(self, exchange, message, routing_key, **kwargs):
@@ -1109,62 +927,3 @@ class Transport(virtual.Transport):
     def _get_errors(self):
         """Utility to import redis-py's exceptions at runtime."""
         return get_redis_error_classes()
-
-
-
-# class SentinelChannel(Channel):
-#     """Channel with explicit Redis Sentinel knowledge.
-#
-#     Broker url is supposed to look like:
-#
-#     sentinel://0.0.0.0:26379;sentinel://0.0.0.0:26380/...
-#
-#     where each sentinel is separated by a `;`.  Multiple sentinels are handled
-#     by :class:`kombu.Connection` constructor, and placed in the alternative
-#     list of servers to connect to in case of connection failure.
-#
-#     Other arguments for the sentinel should come from the transport options
-#     (see :method:`Celery.connection` which is in charge of creating the
-#     `Connection` object).
-#
-#     You must provide at least one option in Transport options:
-#      * `service_name` - name of the redis group to poll
-#     """
-#
-#     from_transport_options = Channel.from_transport_options + (
-#         'master_name',
-#         'min_other_sentinels',
-#         'sentinel_kwargs')
-#
-#     connection_class = sentinel.SentinelManagedConnection if sentinel else None
-#
-#     def _sentinel_managed_pool(self, async=False):
-#         connparams = self._connparams(async)
-#
-#         additional_params = connparams.copy()
-#
-#         additional_params.pop('host', None)
-#         additional_params.pop('port', None)
-#
-#         sentinel_inst = sentinel.Sentinel(
-#             [(connparams['host'], connparams['port'])],
-#             min_other_sentinels=getattr(self, 'min_other_sentinels', 0),
-#             sentinel_kwargs=getattr(self, 'sentinel_kwargs', {}),
-#             **additional_params)
-#
-#         master_name = getattr(self, 'master_name', None)
-#
-#         return sentinel_inst.master_for(
-#             master_name,
-#             self.Client,
-#         ).connection_pool
-#
-#     def _get_pool(self, async=False):
-#         return self._sentinel_managed_pool(async)
-#
-#
-# class SentinelTransport(Transport):
-#     """Redis Sentinel Transport."""
-#
-#     default_port = 26379
-#     Channel = SentinelChannel
