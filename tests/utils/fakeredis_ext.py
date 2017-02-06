@@ -6,6 +6,13 @@ from fakeredis import FakeStrictRedis, FakePipeline
 
 
 class FakeStrictRedisWithConnection(FakeStrictRedis):
+    """
+    An extension of FakeStrictRedis to implement some of the low level interfaces of StrictRedis from redis-py. Kombu
+    uses these internal features to simulate an async event based request response cycle so that it can be hooked into
+    its chain.
+
+    You can learn more about it in the kombu source for the redis transport.
+    """
     def __init__(self, *args, **kwargs):
         super(FakeStrictRedisWithConnection, self).__init__(*args, **kwargs)
         self._connection = None
