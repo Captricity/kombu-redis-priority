@@ -14,5 +14,12 @@ setup(
     classifiers=[],
     install_requires=[
         'kombu'
-    ]
+    ],
+    tests_require=[
+        'six',
+        'mock==1.0.1',
+        'freezegun',
+        'fakeredis'
+    ],
+    test_suite='tests'
 )
