@@ -302,6 +302,8 @@ class Channel(virtual.Channel):
          'priority_steps')  # <-- do not add comma here!
     )
 
+    default_zpriority = '+inf'
+
     connection_class = redis.Connection if redis else None
 
     def __init__(self, *args, **kwargs):
@@ -852,7 +854,10 @@ class Channel(virtual.Channel):
                 if queue not in self.active_fanout_queues}
 
     def _get_message_priority(self, message, reverse=False):
-        """Get priority from message.
+        """Get priority from message key zpriority
+
+        Uses zpriority instead of priority to differentiate
+        from other celery priority implementations
 
         The value is not limited!
 
@@ -860,9 +865,9 @@ class Channel(virtual.Channel):
             Lower value has more priority.
         """
         try:
-            priority = int(message['properties']['priority'])
+            priority = int(message['properties']['zpriority'])
         except (TypeError, ValueError, KeyError):
-            priority = self.default_priority
+            priority = self.default_zpriority
 
         return priority
 

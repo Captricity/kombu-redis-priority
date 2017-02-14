@@ -48,14 +48,14 @@ class TestSortedSetTransport(unittest.TestCase):
 
         # verify message:
         # - a time prefix is appended to the message
-        # - has default priority (0)
+        # - has default priority of +inf
         enqueued_msg, priority = next(six.iteritems(raw_queue))
         self.assertEqual(enqueued_msg, self._prefixed_message(faketime, {}))
-        self.assertEqual(priority, 0.0)
+        self.assertEqual(priority, float('+inf'))
 
     def test_prioritized_message_add(self):
         raw_db = self.faker._db
-        msg = {'properties': {'priority': 5}}
+        msg = {'properties': {'zpriority': 5}}
 
         # assert no queues exist
         self.assertEqual(len(raw_db), 0)
