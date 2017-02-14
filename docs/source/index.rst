@@ -26,6 +26,7 @@ messages into the sortedset.
    :caption: Contents:
 
    installation
+   usage
    testing
 
 
