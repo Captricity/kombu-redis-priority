@@ -15,4 +15,9 @@ following line before you configure your celery application in a celery.py file:
     app = Celery('redis_priority_example')
 
 You can now use the redis_priority transport by referring to the
-`redispriority` transport wherever you configure kombu.
+`redispriorityasync` transport wherever you configure kombu.
+
+Example::
+
+    BROKER_URL = 'redispriorityasync://{}:{}/{}'.format(REDIS_HOST, REDIS_PORT, REDIS_QUEUE)
+

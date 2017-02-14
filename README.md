@@ -7,11 +7,3 @@ Kombu Transport using Redis SortedSets
 ## Running tests
 
     python setup.py test
-
-## Using with celery tasks - zpriority
-
-    task.apply_async(zpriority=10)
-
-zpriority is used to avoid confusion with other celery priority implementations
-
-Note - tasks created using this backend will have the lowest priority, +inf
