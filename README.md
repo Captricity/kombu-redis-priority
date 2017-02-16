@@ -4,6 +4,10 @@
 
 Kombu Transport using Redis SortedSets
 
+## Documentation
+
+[Read the Docs](http://kombu-redis-priority.readthedocs.io/en/documentation_chain/)
+
 ## Running tests
 
     python setup.py test
