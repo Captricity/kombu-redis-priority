@@ -605,7 +605,7 @@ class Channel(virtual.Channel):
 
     def _size(self, queue):
         with self.conn_or_acquire() as client:
-            size = client.zcount(queue, '-inf', '+inf')
+            return client.zcount(queue, '-inf', '+inf')
 
     def _put(self, queue, message, **kwargs):
         """Deliver message."""
