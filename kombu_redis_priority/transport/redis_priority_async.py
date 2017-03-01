@@ -376,10 +376,6 @@ class Channel(virtual.Channel):
                 except KeyError:
                     pass
                 for queue in self._lookup(exchange, routing_key):
-                    # (client.lpush if leftmost else client.rpush)(
-                    #     queue, dumps(payload),
-                    # )
-
                     # Add with priority 0 so it jumps ahead in the queue
                     client.zadd(queue, '-inf', self._add_time_prefix(dumps(payload)))
             except Exception:
@@ -596,29 +592,20 @@ class Channel(virtual.Channel):
             self.client.parse_response(self.client.connection, type)
 
     def _get(self, queue):
-        with self.conn_or_acquire() as client:
-            for pri in self.priority_steps:
-                item = client.rpop(self._q_for_pri(queue, pri))
-                if item:
-                    return loads(bytes_to_str(item))
-            raise Empty()
+        # This method is used with a synchronous Kombu channel, which is not currently supported.
+        # The old code is left here in case we want to support synchronous channels one day.
+        #
+        # with self.conn_or_acquire() as client:
+        #     for pri in self.priority_steps:
+        #         item = client.rpop(self._q_for_pri(queue, pri))
+        #         if item:
+        #             return loads(bytes_to_str(item))
+        #     raise Empty()
+        raise NotImplementedError
 
     def _size(self, queue):
         with self.conn_or_acquire() as client:
-            with client.pipeline() as pipe:
-                for pri in self.priority_steps:
-                    pipe = pipe.zcount(self._q_for_pri(queue, pri), '-inf', '+inf')
-                sizes = pipe.execute()
-                return sum(size for size in sizes
-                           if isinstance(size, numbers.Integral))
-
-    def _q_for_pri(self, queue, pri):
-        pri = self.priority(pri)
-        return '%s%s%s' % ((queue, self.sep, pri) if pri else (queue, '', ''))
-
-    def priority(self, n):
-        steps = self.priority_steps
-        return steps[bisect(steps, n) - 1]
+            size = client.zcount(queue, '-inf', '+inf')
 
     def _put(self, queue, message, **kwargs):
         """Deliver message."""
@@ -658,17 +645,13 @@ class Channel(virtual.Channel):
                         self.sep.join([routing_key or '',
                                        pattern or '',
                                        queue or '']))
-            with client.pipeline() as pipe:
-                for pri in self.priority_steps:
-                    pipe = pipe.delete(self._q_for_pri(queue, pri))
-                pipe.execute()
+            client.delete(queue)
 
     def _has_queue(self, queue, **kwargs):
         with self.conn_or_acquire() as client:
-            with client.pipeline() as pipe:
-                for pri in self.priority_steps:
-                    pipe = pipe.exists(self._q_for_pri(queue, pri))
-                return any(pipe.execute())
+            if client.exists(queue):
+                return True
+            return False
 
     def get_table(self, exchange):
         key = self.keyprefix_queue % exchange
@@ -681,11 +664,9 @@ class Channel(virtual.Channel):
     def _purge(self, queue):
         with self.conn_or_acquire() as client:
             with client.pipeline() as pipe:
-                for pri in self.priority_steps:
-                    priq = self._q_for_pri(queue, pri)
-                    pipe = pipe.llen(priq).delete(priq)
-                sizes = pipe.execute()
-                return sum(sizes[::2])
+                pipe = pipe.zcount(queue, '-inf', '+inf').delete(queue)
+                size = pipe.execute()
+                return size[0]
 
     def close(self):
         self._closing = True
