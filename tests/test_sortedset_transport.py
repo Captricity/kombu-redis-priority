@@ -110,6 +110,7 @@ class TestSortedSetTransport(unittest.TestCase):
         num_msg = self.channel._purge('foo')
         # verify that we removed one message and the key in Redis does not exist
         self.assertEqual(num_msg, 1)
+        self.assertEqual(len(raw_db), 0)
 
     def test_size(self):
         size = self.channel._size('foo')

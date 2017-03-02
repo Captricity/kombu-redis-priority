@@ -593,14 +593,7 @@ class Channel(virtual.Channel):
 
     def _get(self, queue):
         # This method is used with a synchronous Kombu channel, which is not currently supported.
-        # The old code is left here in case we want to support synchronous channels one day.
-        #
-        # with self.conn_or_acquire() as client:
-        #     for pri in self.priority_steps:
-        #         item = client.rpop(self._q_for_pri(queue, pri))
-        #         if item:
-        #             return loads(bytes_to_str(item))
-        #     raise Empty()
+        # Look at commit 4f956903cecc9d575193b7b0819ebe4a386328c9 to the view the old list backend code.
         raise NotImplementedError
 
     def _size(self, queue):
@@ -649,9 +642,7 @@ class Channel(virtual.Channel):
 
     def _has_queue(self, queue, **kwargs):
         with self.conn_or_acquire() as client:
-            if client.exists(queue):
-                return True
-            return False
+            return client.exists(queue)
 
     def get_table(self, exchange):
         key = self.keyprefix_queue % exchange
