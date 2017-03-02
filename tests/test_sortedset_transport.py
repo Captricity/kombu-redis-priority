@@ -95,3 +95,39 @@ class TestSortedSetTransport(unittest.TestCase):
         with mock.patch.object(self.channel.connection, '_deliver') as mock_deliver:
             self.channel._zrem_read()
             mock_deliver.assert_called_once_with(msg, 'foo')
+
+    def test_purge(self):
+        raw_db = self.faker._db
+
+        # assert no queues exist
+        self.assertEqual(len(raw_db), 0)
+
+        # put a blank message
+        self.channel._put('foo', {})
+        # verify queue is created
+        self.assertEqual(len(raw_db), 1)
+
+        num_msg = self.channel._purge('foo')
+        # verify that we removed one message and the key in Redis does not exist
+        self.assertEqual(num_msg, 1)
+        self.assertEqual(len(raw_db), 0)
+
+    def test_size(self):
+        size = self.channel._size('foo')
+        # verify that there are no messages
+        self.assertEqual(size, 0)
+
+        # put two blank messages
+        self.channel._put('foo', {'bar': 1})
+        self.channel._put('foo', {'bar': 2})
+
+        size = self.channel._size('foo')
+        # verify that there are two messages
+        self.assertEqual(size, 2)
+
+    def test_has_queue(self):
+        # put two blank messages
+        self.channel._put('foo', {})
+
+        self.assertTrue(self.channel._has_queue('foo'))
+        self.assertFalse(self.channel._has_queue('bar'))
