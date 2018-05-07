@@ -598,7 +598,7 @@ class Channel(virtual.Channel):
 
     def _size(self, queue):
         with self.conn_or_acquire() as client:
-            return client.zcount(queue, '-inf', '+inf')
+            return client.zcard(queue)
 
     def _put(self, queue, message, **kwargs):
         """Deliver message."""
@@ -655,7 +655,7 @@ class Channel(virtual.Channel):
     def _purge(self, queue):
         with self.conn_or_acquire() as client:
             with client.pipeline() as pipe:
-                pipe = pipe.zcount(queue, '-inf', '+inf').delete(queue)
+                pipe = pipe.zcard(queue).delete(queue)
                 size = pipe.execute()
                 return size[0]
 
