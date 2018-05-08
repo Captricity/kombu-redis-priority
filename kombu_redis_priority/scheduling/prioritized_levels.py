@@ -19,12 +19,11 @@ current level.
 This is done to support the asynchronous nature in which
 kombu pulls tasks.
 """
-import sys
 from collections import defaultdict
 from kombu.utils.scheduling import cycle_by_name
 from .base import QueueScheduler
 
-HIGHEST_LEVEL = sys.maxsize
+HIGHEST_LEVEL = float('inf')
 
 
 class PrioritizedLevelsQueueScheduler(QueueScheduler):
