@@ -19,7 +19,8 @@ setup(
         'six',
         'mock==1.0.1',
         'freezegun',
-        'fakeredis'
+        'fakeredis',
+        'ddt'
     ],
     test_suite='tests'
 )

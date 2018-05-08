@@ -9,6 +9,7 @@ import six
 
 from .utils.fakeredis_ext import FakeStrictRedisWithConnection
 from kombu import Connection
+from kombu.five import Empty
 from kombu_redis_priority.transport.redis_priority_async import redis, Transport
 
 
@@ -88,7 +89,7 @@ class TestSortedSetTransport(unittest.TestCase):
 
         # Make the channel pull off the foo queue
         self.channel._active_queues.append('foo')
-        self.channel._update_queue_cycle()
+        self.channel._update_queue_schedule()
 
         # And then try the zrem pipeline
         self.channel._zrem_start()
@@ -131,3 +132,70 @@ class TestSortedSetTransport(unittest.TestCase):
 
         self.assertTrue(self.channel._has_queue('foo'))
         self.assertFalse(self.channel._has_queue('bar'))
+
+    def test_round_robin_multiple_queues(self):
+        # Create 2 queues with 2 messages
+        msg = {
+            'properties': {'delivery_tag': 'abcd'}
+        }
+        for i in range(2):
+            self.faker.zadd('foo', i, self._prefixed_message(time.time() + i, msg))
+            self.faker.zadd('bar', i, self._prefixed_message(time.time() + i, msg))
+
+        # Make the channel pull off the foo queue
+        self.channel._active_queues.append('foo')
+        self.channel._active_queues.append('bar')
+        self.channel._update_queue_schedule()
+
+        # And then check zrem pipeline rotates
+        def check_zrem_pipeline(queue):
+            self.channel._zrem_start()
+            with mock.patch.object(self.channel.connection, '_deliver') as mock_deliver:
+                self.channel._zrem_read()
+                mock_deliver.assert_called_once_with(msg, queue)
+
+        # Check two rotations
+        check_zrem_pipeline('foo')
+        check_zrem_pipeline('bar')
+        check_zrem_pipeline('foo')
+        check_zrem_pipeline('bar')
+
+    def test_prioritized_levels_queue_scheduling_usage(self):
+        # Setup channel with prioritized levels scheduler and queue preference
+        queue_preference = {
+            0: ['TimeMachine', 'FluxCapacitor'],
+            1: ['1985', '1955', '2015'],
+            2: ['Marty']
+        }
+        with mock.patch.object(redis, 'StrictRedis', FakeStrictRedisWithConnection):
+            connection = Connection(
+                transport=Transport,
+                transport_options={
+                    'queue_order_strategy': 'priority',
+                    'prioritized_levels_queue_config': queue_preference
+                })
+            channel = connection.default_channel
+
+        # Setup so that only one queue in level 2 has a message
+        msg = {
+            'properties': {'delivery_tag': 'abcd'}
+        }
+        self.faker.zadd('1955', 1, self._prefixed_message(time.time(), msg))
+
+        # Then check to make sure that scheduler will fully rotate levels 0 and 1, but not 2
+        def check_zrem_pipeline(queue, empty):
+            channel._zrem_start()
+            with mock.patch.object(channel.connection, '_deliver') as mock_deliver:
+                if empty:
+                    with self.assertRaises(Empty):
+                        channel._zrem_read()
+                else:
+                    channel._zrem_read()
+                    mock_deliver.assert_called_once_with(msg, queue)
+
+        check_zrem_pipeline('TimeMachine', True)
+        check_zrem_pipeline('FluxCapacitor', True)
+        check_zrem_pipeline('1985', True)
+        check_zrem_pipeline('1955', False)
+        check_zrem_pipeline('2015', True)
+        check_zrem_pipeline('TimeMachine', True)
