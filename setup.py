@@ -17,7 +17,7 @@ setup(
     ],
     tests_require=[
         'six',
-        'mock==1.0.1',
+        'mock==2.0.0',
         'freezegun',
         'fakeredis',
         'ddt'

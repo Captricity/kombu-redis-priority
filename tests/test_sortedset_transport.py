@@ -142,10 +142,7 @@ class TestSortedSetTransport(unittest.TestCase):
             self.faker.zadd('foo', i, self._prefixed_message(time.time() + i, msg))
             self.faker.zadd('bar', i, self._prefixed_message(time.time() + i, msg))
 
-        # Make the channel pull off the foo queue
-        self.channel._active_queues.append('foo')
-        self.channel._active_queues.append('bar')
-        self.channel._update_queue_schedule()
+        self.channel._queue_scheduler.update(['foo', 'bar'])
 
         # And then check zrem pipeline rotates
         def check_zrem_pipeline(queue):
