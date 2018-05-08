@@ -1,4 +1,4 @@
-"""Redis transport."""
+"""Redis transport backed by sortedset data structure."""
 from __future__ import absolute_import, unicode_literals
 
 import numbers
@@ -26,12 +26,16 @@ from kombu.transport.redis import _after_fork_cleanup_channel, QoS
 
 import kombu.transport.virtual as virtual
 
+from ..scheduling.round_robin import RoundRobinQueueScheduler
+from ..scheduling.prioritized_levels import PrioritizedLevelsQueueScheduler
+
 try:
     import redis
 except ImportError:  # pragma: no cover
     redis = None     # noqa
 
 
+# Register priority transport into available transports under kombu
 transport.TRANSPORT_ALIASES['redispriorityasync'] = 'kombu_redis_priority.transport.redis_priority_async:Transport'
 
 
@@ -42,6 +46,10 @@ DEFAULT_PORT = 6379
 DEFAULT_DB = 0
 
 
+# Copied from kombu.transport.redis, with list operations replaced with
+# sortedset operations. Below notes are copied verbatim from
+# kombu.transport.redis as the same comments apply here.
+# -----------------
 # This implementation may seem overly complex, but I assure you there is
 # a good reason for doing it this way.
 #
@@ -54,7 +62,8 @@ DEFAULT_DB = 0
 #
 # Also it means we can easily use PUBLISH/SUBSCRIBE to do fanout
 # exchanges (broadcast), as an alternative to pushing messages to fanout-bound
-# queues manually.
+# queues manually. Note that we must support the fanout exchanges to support
+# the celery events system.
 
 
 class MultiChannelPoller(object):
@@ -257,26 +266,18 @@ class Channel(virtual.Channel):
     #: Can be either string alias, or a cycle strategy class
     #:
     #: - ``round_robin``
-    #:   (:class:`~kombu.utils.scheduling.round_robin_cycle`).
+    #:   (:class:`~kombu_redis_priority.scheduling.round_robin`).
     #:
     #:    Make sure each queue has an equal opportunity to be consumed from.
     #:
-    #: - ``sorted``
-    #:   (:class:`~kombu.utils.scheduling.sorted_cycle`).
+    #: - ``prioritized_levels``
+    #:   (:class:`~kombu_redis_priority.scheduling.prioritized_levels`).
     #:
-    #:    Consume from queues in alphabetical order.
-    #:    If the first queue in the sorted list always contains messages,
-    #:    then the rest of the queues will never be consumed from.
-    #:
-    #: - ``priority``
-    #:   (:class:`~kombu.utils.scheduling.priority_cycle`).
-    #:
-    #:    Consume from queues in original order, so that if the first
-    #:    queue always contains messages, the rest of the queues
-    #:    in the list will never be consumed from.
+    #:    Requires setting prioritized_levels_queue_config.
     #:
     #: The default is to consume from queues in round robin.
     queue_order_strategy = 'round_robin'
+    prioritized_levels_queue_config = {}
     empty = False
 
     _async_pool = None
@@ -299,7 +300,8 @@ class Channel(virtual.Channel):
          'socket_keepalive_options',
          'queue_order_strategy',
          'max_connections',
-         'priority_steps')  # <-- do not add comma here!
+         'priority_steps',
+         'prioritized_levels_queue_config')  # <-- do not add comma here!
     )
 
     default_zpriority = '+inf'
@@ -313,7 +315,13 @@ class Channel(virtual.Channel):
         if not self.ack_emulation:  # disable visibility timeout
             self.QoS = virtual.QoS
 
-        self._queue_cycle = cycle_by_name(self.queue_order_strategy)()
+        if self.queue_order_strategy == 'round_robin':
+            self._queue_scheduler = RoundRobinQueueScheduler()
+        elif self.queue_order_strategy == 'prioritized_levels':
+            self._queue_scheduler = \
+                PrioritizedLevelsQueueScheduler(self.prioritized_levels_queue_config)
+        else:
+            raise NotImplementedError
         self.Client = self._get_client()
         self.ResponseError = self._get_response_error()
         self.active_fanout_queues = set()
@@ -404,6 +412,9 @@ class Channel(virtual.Channel):
             self._fanout_to_queue[exchange] = queue
         ret = super(Channel, self).basic_consume(queue, *args, **kwargs)
 
+        # TODO: update documentation to reflect sortedset implementation
+        # (we are not using BRPOP)
+        #
         # Update fair cycle between queues.
         #
         # We cycle between queues fairly to make sure that
@@ -414,7 +425,7 @@ class Channel(virtual.Channel):
         # by rotating the most recently used queue to the
         # and of the list.  See Kombu github issue #166 for
         # more discussion of this method.
-        self._update_queue_cycle()
+        self._update_queue_schedule()
         return ret
 
     def basic_cancel(self, consumer_tag):
@@ -447,7 +458,7 @@ class Channel(virtual.Channel):
         except KeyError:
             pass
         ret = super(Channel, self).basic_cancel(consumer_tag)
-        self._update_queue_cycle()
+        self._update_queue_schedule()
         return ret
 
     def _get_publish_topic(self, exchange, routing_key):
@@ -530,20 +541,23 @@ class Channel(virtual.Channel):
                     return True
 
     def _zrem_start(self, timeout=1):
-        queues = self._queue_cycle.consume(1)
-        if not queues:
+        queue = self._queue_scheduler.next()
+        if not queue:
             return
+        self.queue = queue
 
         self._in_poll = self.client.connection
 
+        # In one atomic pipe, grab the top element in the queue by
+        # score (ZRANGE) and remove it (ZREMRANGEBYRANK)
         pipe = self.client.pipeline()
-        queue = queues[0]
         pipe.zrange(queue, 0, 0)
         pipe.zremrangebyrank(queue, 0, 0)
-        self.queue = queue
 
         # Hack to make call asynchronous
         connection = self.client.connection
+        # Wrap pipeline commands in MULTI/EXEC so that they are executed
+        # atomically by redis.
         cmds = chain([(('MULTI', ), {})], pipe.command_stack, [(('EXEC', ), {})])
         all_cmds = connection.pack_commands([args for args, _ in cmds])
         connection.send_packed_command(all_cmds)
@@ -551,7 +565,7 @@ class Channel(virtual.Channel):
     def _zrem_read(self, **options):
         try:
             try:
-                # We only care about the last output
+                # The last response contains the response of ZRANGE.
                 output = None
                 for i in range(0, 4):
                     output = self.client.parse_response(self.client.connection, '_', **options)
@@ -569,19 +583,14 @@ class Channel(virtual.Channel):
 
             # Rotate the queue
             dest = self.queue
-            self._queue_cycle.rotate(dest)
+            all_queues_empty = self._queue_scheduler.rotate(dest, not bool(item))
 
             if item:
-                self.empty = False
                 self.connection._deliver(loads(bytes_to_str(item)), dest)
                 return True
-            else:
-                if dest == self.start_queue:
-                    if self.empty:
-                        sleep(1)
-                    else:
-                        self.empty = True
-                raise Empty()
+            elif all_queues_empty:
+                sleep(1)
+            raise Empty()
         finally:
             self._in_poll = None
 
@@ -598,7 +607,7 @@ class Channel(virtual.Channel):
 
     def _size(self, queue):
         with self.conn_or_acquire() as client:
-            return client.zcount(queue, '-inf', '+inf')
+            return client.zcard(queue)
 
     def _put(self, queue, message, **kwargs):
         """Deliver message."""
@@ -655,7 +664,7 @@ class Channel(virtual.Channel):
     def _purge(self, queue):
         with self.conn_or_acquire() as client:
             with client.pipeline() as pipe:
-                pipe = pipe.zcount(queue, '-inf', '+inf').delete(queue)
+                pipe = pipe.zcard(queue).delete(queue)
                 size = pipe.execute()
                 return size[0]
 
@@ -807,13 +816,8 @@ class Channel(virtual.Channel):
         client = self._create_client(async=True)
         return client.pubsub()
 
-    def _update_queue_cycle(self):
-        self._queue_cycle.update(self.active_queues)
-        queue = self._queue_cycle.consume(1)
-        if queue:
-            self.start_queue = queue[0]
-        else:
-            self.start_queue = None
+    def _update_queue_schedule(self):
+        self._queue_scheduler.update(self.active_queues)
 
     def _get_response_error(self):
         from redis import exceptions
