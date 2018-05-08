@@ -270,7 +270,7 @@ class Channel(virtual.Channel):
     #:
     #:    Make sure each queue has an equal opportunity to be consumed from.
     #:
-    #: - ``priority``
+    #: - ``prioritized_levels``
     #:   (:class:`~kombu_redis_priority.scheduling.prioritized_levels`).
     #:
     #:    Requires setting prioritized_levels_queue_config.
@@ -317,9 +317,11 @@ class Channel(virtual.Channel):
 
         if self.queue_order_strategy == 'round_robin':
             self._queue_scheduler = RoundRobinQueueScheduler()
-        elif self.queue_order_strategy == 'priority':
+        elif self.queue_order_strategy == 'prioritized_levels':
             self._queue_scheduler = \
                 PrioritizedLevelsQueueScheduler(self.prioritized_levels_queue_config)
+        else:
+            raise NotImplementedError
         self.Client = self._get_client()
         self.ResponseError = self._get_response_error()
         self.active_fanout_queues = set()

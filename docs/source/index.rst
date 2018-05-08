@@ -27,6 +27,7 @@ messages into the sortedset.
 
    installation
    usage
+   queue_scheduling
    testing
 
 

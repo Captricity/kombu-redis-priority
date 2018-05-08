@@ -171,7 +171,7 @@ class TestSortedSetTransport(unittest.TestCase):
             connection = Connection(
                 transport=Transport,
                 transport_options={
-                    'queue_order_strategy': 'priority',
+                    'queue_order_strategy': 'prioritized_levels',
                     'prioritized_levels_queue_config': queue_preference
                 })
             channel = connection.default_channel
