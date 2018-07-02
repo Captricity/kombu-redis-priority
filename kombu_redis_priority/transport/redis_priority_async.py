@@ -28,6 +28,8 @@ import kombu.transport.virtual as virtual
 
 from ..scheduling.round_robin import RoundRobinQueueScheduler
 from ..scheduling.prioritized_levels import PrioritizedLevelsQueueScheduler
+from ..scheduling.weighted_prioritized_levels_with_round_robin import \
+    WeightedPrioritizedLevelsWithRRQueueScheduler
 
 try:
     import redis
@@ -301,7 +303,9 @@ class Channel(virtual.Channel):
          'queue_order_strategy',
          'max_connections',
          'priority_steps',
-         'prioritized_levels_queue_config')  # <-- do not add comma here!
+         'prioritized_levels_queue_config',
+         'weight_for_prioritized_levels',
+         'queues_for_round_robin')  # <-- do not add comma here!
     )
 
     default_zpriority = '+inf'
@@ -320,6 +324,12 @@ class Channel(virtual.Channel):
         elif self.queue_order_strategy == 'prioritized_levels':
             self._queue_scheduler = \
                 PrioritizedLevelsQueueScheduler(self.prioritized_levels_queue_config)
+        elif self.queue_order_strategy == 'weighted_prioritized_levels_with_round_robin':
+            self._queue_scheduler = \
+                WeightedPrioritizedLevelsWithRRQueueScheduler(
+                        self.weight_for_prioritized_levels,
+                        self.prioritized_levels_queue_config,
+                        self.queues_for_round_robin)
         else:
             raise NotImplementedError
         self.Client = self._get_client()
