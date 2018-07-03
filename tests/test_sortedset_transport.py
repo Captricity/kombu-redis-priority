@@ -196,3 +196,28 @@ class TestSortedSetTransport(unittest.TestCase):
         check_zrem_pipeline('1955', False)
         check_zrem_pipeline('2015', True)
         check_zrem_pipeline('TimeMachine', True)
+
+    def test_configuration_of_weighted_prioritized_levels_or_round_robin(self):
+        # Setup channel with weighted prioritized levels scheduler and queue preference
+        queue_preference = {
+            0: ['TimeMachine', 'FluxCapacitor'],
+            1: ['1985', '1955', '2015'],
+            2: ['Marty']
+        }
+        weight = 0.7
+        rr_queues = ['1985', '1955']
+        with mock.patch.object(redis, 'StrictRedis', FakeStrictRedisWithConnection):
+            connection = Connection(
+                transport=Transport,
+                transport_options={
+                    'queue_order_strategy': 'weighted_prioritized_levels_with_round_robin',
+                    'prioritized_levels_queue_config': queue_preference,
+                    'weight_for_prioritized_levels': weight,
+                    'queues_for_round_robin': rr_queues
+                })
+            channel = connection.default_channel
+
+        scheduler = channel._queue_scheduler
+        self.assertEqual(scheduler.prioritized_levels.queue_config, queue_preference)
+        self.assertEqual(scheduler.weight_for_prioritized_levels, 0.7)
+        self.assertEqual(scheduler.rr_queues, rr_queues)
