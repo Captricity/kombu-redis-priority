@@ -20,11 +20,13 @@ This is done to support the asynchronous nature in which
 kombu pulls tasks.
 """
 from collections import defaultdict
+from kombu.log import get_logger
 from kombu.utils.scheduling import cycle_by_name
 from .base import QueueScheduler
 
 HIGHEST_LEVEL = float('inf')
 
+logger = get_logger('MOSTLY-PLS-TESTING')
 
 class PrioritizedLevelsQueueScheduler(QueueScheduler):
     """
@@ -112,6 +114,7 @@ class PrioritizedLevelsQueueScheduler(QueueScheduler):
     def _set_level(self, level):
         self.current_level = level
         self.queue_cycle.update(self.queue_config[self.current_level])
+        logger.warn('Setting level to: {}; queues: [{}]'.format(level, self.queue_config[level]))
         queues = self.queue_cycle.consume(1)
         if queues:
             self.start_of_rotation = queues[0]

@@ -1,10 +1,14 @@
 import random
+
+from kombu.log import get_logger
+
 from .base import QueueScheduler
 from .prioritized_levels import PrioritizedLevelsQueueScheduler
 from .round_robin import RoundRobinQueueScheduler
 
 HIGHEST_LEVEL = float('inf')
 
+logger = get_logger('MOSTLY-PLS-TESTING')
 
 class WeightedPrioritizedLevelsWithRRQueueScheduler(QueueScheduler):
     """
@@ -33,10 +37,13 @@ class WeightedPrioritizedLevelsWithRRQueueScheduler(QueueScheduler):
         self.last_choice = None
 
     def next(self):
+        logger.warn('Begin running scheduler')
         if random.random() < self.weight_for_prioritized_levels:
+            logger.warn('Chose PLS')
             self.last_choice = self.prioritized_levels
             return self.prioritized_levels.next()
         else:
+            logger.warn('Chose RR')
             self.last_choice = self.round_robin
             return self.round_robin.next()
 
