@@ -1,14 +1,12 @@
 import random
 
-from kombu.log import get_logger
-
+from __init__ import logger
 from .base import QueueScheduler
 from .prioritized_levels import PrioritizedLevelsQueueScheduler
 from .round_robin import RoundRobinQueueScheduler
 
 HIGHEST_LEVEL = float('inf')
 
-logger = get_logger('MOSTLY-PLS-TESTING')
 
 class WeightedPrioritizedLevelsWithRRQueueScheduler(QueueScheduler):
     """

@@ -19,14 +19,14 @@ current level.
 This is done to support the asynchronous nature in which
 kombu pulls tasks.
 """
+
+from __init__ import logger
 from collections import defaultdict
-from kombu.log import get_logger
 from kombu.utils.scheduling import cycle_by_name
 from .base import QueueScheduler
 
 HIGHEST_LEVEL = float('inf')
 
-logger = get_logger('MOSTLY-PLS-TESTING')
 
 class PrioritizedLevelsQueueScheduler(QueueScheduler):
     """
