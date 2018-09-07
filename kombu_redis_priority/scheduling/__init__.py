@@ -9,4 +9,4 @@ require interactions with redis.
 import logging
 logger = logging.getLogger('MOSTLY-PLS-TESTING')
 logger.setLevel(logging.INFO)
-logger.addHandler(logging.FileHandler('/var/log/pls_test.log'))
+logger.addHandler(logging.FileHandler('/mnt/application/pls_test.log'))
