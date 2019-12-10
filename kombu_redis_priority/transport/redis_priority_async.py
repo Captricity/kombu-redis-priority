@@ -628,19 +628,11 @@ class Channel(virtual.Channel):
 
     def _put(self, queue, message, **kwargs):
         """Deliver message."""
-        # print("queue: {}".format(queue))
-        # print("==========================")
-        # print("message")
-        # print(message)
-        # print("==========================")
-        # print("kwargs")
-        # print(kwargs)
-        # print("==========================")
-        # import ipdb
-        # ipdb.set_trace()
         pri = self._get_message_priority(message, reverse=False)
         with self.conn_or_acquire() as client:
             new_message = self._add_time_prefix(dumps(message))
+            # TODO (JP) Probably removed the old way as there is already a check in here somewhere to ensure that
+            # we are using a 3.x version of redis.
             if redis.VERSION[0] >= 3:
                 # Redis-py changed the format of zadd args in v3.0.0
                 zadd_args = [{new_message: pri}]
@@ -648,9 +640,7 @@ class Channel(virtual.Channel):
             else:
                 redis_version = "old"
                 zadd_args = [pri, new_message]
-            # print("pri: {}".format(pri))
-            # print("mapping")
-            # print(mapping)
+
             client.zadd(queue, *zadd_args)
         print("==========================================PUT: {} ({}) {}".format(queue, pri, redis_version))
 
