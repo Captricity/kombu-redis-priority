@@ -8,30 +8,31 @@ import time
 import six
 
 from .utils.fakeredis_ext import FakeStrictRedisWithConnection
+from fakeredis import FakeServer
 from kombu import Connection
 from kombu.five import Empty
-from kombu_redis_priority.transport.redis_priority_async import redis, Transport
+from kombu_redis_priority.transport.redis_priority_async import Transport
 
 
 class TestSortedSetTransport(unittest.TestCase):
+
     def setUp(self):
-        self.faker = FakeStrictRedisWithConnection()
-        with mock.patch.object(redis, 'StrictRedis', FakeStrictRedisWithConnection):
-            self.connection = self.create_connection()
-            self.channel = self.connection.default_channel
+        self.fake_redis_server = FakeServer()
+        self.fake_redis = FakeStrictRedisWithConnection(server=self.fake_redis_server)
+        self.connection, self.channel = self.create_connection_and_channel(self.fake_redis, transport=Transport)
 
-    def tearDown(self):
-        self.faker.flushall()
-
-    def create_connection(self):
-        return Connection(transport=Transport)
+    def create_connection_and_channel(self, fake_redis, *args, **kwargs):
+        path = "kombu_redis_priority.transport.redis_priority_async.redis.StrictRedis"
+        with mock.patch(path, return_value=fake_redis):
+            connection = Connection(*args, **kwargs)
+            channel = connection.default_channel
+        return connection, channel
 
     def _prefixed_message(self, time_, msg_obj):
         return six.b('{:011d}:'.format(int(time_)) + json.dumps(msg_obj))
 
     def test_default_message_add(self):
-        raw_db = self.faker._db
-
+        raw_db = self.fake_redis_server.dbs[0]
         # assert no queues exist
         self.assertEqual(len(raw_db), 0)
 
@@ -44,18 +45,19 @@ class TestSortedSetTransport(unittest.TestCase):
         self.assertEqual(len(raw_db), 1)
 
         # ... and verify queue has a message
-        raw_queue = raw_db['foo']
+        raw_queue = dict(raw_db[b'foo'].value.items())
+
         self.assertEqual(len(raw_queue), 1)
 
         # verify message:
         # - a time prefix is appended to the message
         # - has default priority of +inf
-        enqueued_msg, priority = next(six.iteritems(raw_queue))
+        enqueued_msg, priority = list(raw_queue.items())[0]
         self.assertEqual(enqueued_msg, self._prefixed_message(faketime, {}))
         self.assertEqual(priority, float('+inf'))
 
     def test_prioritized_message_add(self):
-        raw_db = self.faker._db
+        raw_db = self.fake_redis_server.dbs[0]
         msg = {'properties': {'zpriority': 5}}
 
         # assert no queues exist
@@ -70,13 +72,14 @@ class TestSortedSetTransport(unittest.TestCase):
         self.assertEqual(len(raw_db), 1)
 
         # ... and verify queue has a message
-        raw_queue = raw_db['foo']
+        raw_queue = dict(raw_db[b'foo'].value.items())
+
         self.assertEqual(len(raw_queue), 1)
 
         # verify message:
         # - a time prefix is appended to the message
         # - has default priority (0)
-        enqueued_msg, priority = next(six.iteritems(raw_queue))
+        enqueued_msg, priority = list(raw_queue.items())[0]
         self.assertEqual(enqueued_msg, self._prefixed_message(faketime, msg))
         self.assertEqual(priority, 5.0)
 
@@ -85,7 +88,7 @@ class TestSortedSetTransport(unittest.TestCase):
         msg = {
             'properties': {'delivery_tag': 'abcd'}
         }
-        self.faker.zadd('foo', 1, self._prefixed_message(time.time(), msg))
+        self.fake_redis.zadd('foo', {self._prefixed_message(time.time(), msg): 1})
 
         # Make the channel pull off the foo queue
         self.channel._active_queues.append('foo')
@@ -98,7 +101,7 @@ class TestSortedSetTransport(unittest.TestCase):
             mock_deliver.assert_called_once_with(msg, 'foo')
 
     def test_purge(self):
-        raw_db = self.faker._db
+        raw_db = self.fake_redis_server.dbs[0]
 
         # assert no queues exist
         self.assertEqual(len(raw_db), 0)
@@ -139,8 +142,8 @@ class TestSortedSetTransport(unittest.TestCase):
             'properties': {'delivery_tag': 'abcd'}
         }
         for i in range(2):
-            self.faker.zadd('foo', i, self._prefixed_message(time.time() + i, msg))
-            self.faker.zadd('bar', i, self._prefixed_message(time.time() + i, msg))
+            self.fake_redis.zadd('foo', {self._prefixed_message(time.time() + i, msg): i})
+            self.fake_redis.zadd('bar', {self._prefixed_message(time.time() + i, msg): i})
 
         self.channel._queue_scheduler.update(['foo', 'bar'])
 
@@ -164,20 +167,21 @@ class TestSortedSetTransport(unittest.TestCase):
             1: ['1985', '1955', '2015'],
             2: ['Marty']
         }
-        with mock.patch.object(redis, 'StrictRedis', FakeStrictRedisWithConnection):
-            connection = Connection(
-                transport=Transport,
-                transport_options={
-                    'queue_order_strategy': 'prioritized_levels',
-                    'prioritized_levels_queue_config': queue_preference
-                })
-            channel = connection.default_channel
+
+        connection, channel = self.create_connection_and_channel(
+            self.fake_redis,
+            transport=Transport,
+            transport_options={
+                'queue_order_strategy': 'prioritized_levels',
+                'prioritized_levels_queue_config': queue_preference
+            }
+        )
 
         # Setup so that only one queue in level 2 has a message
         msg = {
             'properties': {'delivery_tag': 'abcd'}
         }
-        self.faker.zadd('1955', 1, self._prefixed_message(time.time(), msg))
+        self.fake_redis.zadd('1955', {self._prefixed_message(time.time(), msg): 1})
 
         # Then check to make sure that scheduler will fully rotate levels 0 and 1, but not 2
         def check_zrem_pipeline(queue, empty):
@@ -206,16 +210,17 @@ class TestSortedSetTransport(unittest.TestCase):
         }
         weight = 0.7
         rr_queues = ['1985', '1955']
-        with mock.patch.object(redis, 'StrictRedis', FakeStrictRedisWithConnection):
-            connection = Connection(
-                transport=Transport,
-                transport_options={
-                    'queue_order_strategy': 'weighted_prioritized_levels_with_round_robin',
-                    'prioritized_levels_queue_config': queue_preference,
-                    'weight_for_prioritized_levels': weight,
-                    'queues_for_round_robin': rr_queues
-                })
-            channel = connection.default_channel
+
+        connection, channel = self.create_connection_and_channel(
+            self.fake_redis,
+            transport=Transport,
+            transport_options={
+                'queue_order_strategy': 'weighted_prioritized_levels_with_round_robin',
+                'prioritized_levels_queue_config': queue_preference,
+                'weight_for_prioritized_levels': weight,
+                'queues_for_round_robin': rr_queues
+            }
+        )
 
         scheduler = channel._queue_scheduler
         self.assertEqual(scheduler.prioritized_levels.queue_config, queue_preference)
