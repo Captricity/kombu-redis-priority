@@ -395,7 +395,14 @@ class Channel(virtual.Channel):
                     pass
                 for queue in self._lookup(exchange, routing_key):
                     # Add with priority 0 so it jumps ahead in the queue
-                    client.zadd(queue, '-inf', self._add_time_prefix(dumps(payload)))
+                    if redis.VERSION[0] >= 3:
+                        # Redis-py changed the format of zadd args in v3.0.0
+                        zadd_args = [{self._add_time_prefix(dumps(payload)): '-inf'}]
+                    else:
+                        zadd_args = ['-inf', self._add_time_prefix(dumps(payload))]
+
+                    client.zadd(queue, *zadd_args)
+                    print("===================================restore.")
             except Exception:
                 crit('Could not restore message: %r', payload, exc_info=True)
 
@@ -621,10 +628,31 @@ class Channel(virtual.Channel):
 
     def _put(self, queue, message, **kwargs):
         """Deliver message."""
+        # print("queue: {}".format(queue))
+        # print("==========================")
+        # print("message")
+        # print(message)
+        # print("==========================")
+        # print("kwargs")
+        # print(kwargs)
+        # print("==========================")
+        # import ipdb
+        # ipdb.set_trace()
         pri = self._get_message_priority(message, reverse=False)
-
         with self.conn_or_acquire() as client:
-            client.zadd(queue, pri, self._add_time_prefix(dumps(message)))
+            new_message = self._add_time_prefix(dumps(message))
+            if redis.VERSION[0] >= 3:
+                # Redis-py changed the format of zadd args in v3.0.0
+                zadd_args = [{new_message: pri}]
+                redis_version = "new"
+            else:
+                redis_version = "old"
+                zadd_args = [pri, new_message]
+            # print("pri: {}".format(pri))
+            # print("mapping")
+            # print(mapping)
+            client.zadd(queue, *zadd_args)
+        print("==========================================PUT: {} ({}) {}".format(queue, pri, redis_version))
 
     def _put_fanout(self, exchange, message, routing_key, **kwargs):
         """Deliver fanout message."""
