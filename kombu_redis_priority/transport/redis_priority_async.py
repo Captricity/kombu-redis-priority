@@ -319,7 +319,6 @@ class Channel(virtual.Channel):
         if not self.ack_emulation:  # disable visibility timeout
             self.QoS = virtual.QoS
 
-        print("========================================queue_order_strategy: {}".format(self.queue_order_strategy))
         if self.queue_order_strategy == 'round_robin':
             self._queue_scheduler = RoundRobinQueueScheduler()
         elif self.queue_order_strategy == 'prioritized_levels':
@@ -403,7 +402,6 @@ class Channel(virtual.Channel):
                         zadd_args = ['-inf', self._add_time_prefix(dumps(payload))]
 
                     client.zadd(queue, *zadd_args)
-                    print("===================================restore.")
             except Exception:
                 crit('Could not restore message: %r', payload, exc_info=True)
 
@@ -571,8 +569,6 @@ class Channel(virtual.Channel):
         pipe = self.client.pipeline()
         pipe.zrange(queue, 0, 0)
         pipe.zremrangebyrank(queue, 0, 0)
-        # import ipdb
-        # ipdb.set_trace()
         # Hack to make call asynchronous
         connection = self.client.connection
         # Wrap pipeline commands in MULTI/EXEC so that they are executed
@@ -582,8 +578,6 @@ class Channel(virtual.Channel):
         connection.send_packed_command(all_cmds)
 
     def _zrem_read(self, **options):
-        # import ipdb
-        # ipdb.set_trace()
         try:
             try:
                 # The last response contains the response of ZRANGE.
@@ -646,7 +640,6 @@ class Channel(virtual.Channel):
                 zadd_args = [pri, new_message]
 
             client.zadd(queue, *zadd_args)
-        print("==========================================PUT: {} ({}) {}".format(queue, pri, redis_version))
 
     def _put_fanout(self, exchange, message, routing_key, **kwargs):
         """Deliver fanout message."""

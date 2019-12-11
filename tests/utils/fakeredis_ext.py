@@ -53,8 +53,7 @@ class FakeStrictRedisWithConnection(FakeStrictRedis):
 
         # It is a bug, if the command stack is NOT empty at this point
         assert len(self.connection._sock.data) == 0
-        print("cmds_to_execute")
-        print(cmds_to_execute)
+
         # execute those collected commands and construct response list
         responses = [self._parse_command_response(cmd, args) for cmd, args in cmds_to_execute]
 
@@ -65,38 +64,16 @@ class FakeStrictRedisWithConnection(FakeStrictRedis):
         return 'OK'
 
     def _parse_command_response_from_connection(self, connection, type):
-        print("_parse_command_response_from_connection")
-        # import ipdb
-        # ipdb.set_trace()
         cmd, args = self.connection._sock.data.pop()
-        print("cmd: {}".format(cmd))
-        print("args: {}".format(args))
         assert cmd == type
         assert len(self.connection._sock.data) == 0
         return self._parse_command_response(cmd, args)
 
-    # def _parse_command_response(self, cmd, args):
-    #     print('_parse_command_response')
-    #     # import ipdb
-    #     # ipdb.set_trace()
-    #     cmd_func = getattr(self, cmd.lower())
-    #     # if cmd == "ZADD":
-    #     #     args = (args[0], {args[2]: args[1]})
-    #     print("cmd: {}".format(cmd))
-    #     print("args: {}".format(args))
-
-    #     return cmd_func(*args)
-
     def _parse_command_response(self, cmd, args):
-        print('NEWEST_parse_command_response')
-        # import ipdb
-        # ipdb.set_trace()
         new_client = FakeStrictRedis(server=self.server)
         cmd_func = getattr(new_client, cmd.lower())
         if cmd == "ZADD":
             args = (args[0], {args[2]: args[1]})
-        print("cmd: {}".format(cmd))
-        print("args: {}".format(args))
 
         return cmd_func(*args)
 
