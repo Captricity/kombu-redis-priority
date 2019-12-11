@@ -32,8 +32,6 @@ class TestSortedSetTransport(unittest.TestCase):
         return six.b('{:011d}:'.format(int(time_)) + json.dumps(msg_obj))
 
     def test_default_message_add(self):
-        # import ipdb
-        # ipdb.set_trace()
         raw_db = self.fake_redis_server.dbs[0]
         # assert no queues exist
         self.assertEqual(len(raw_db), 0)

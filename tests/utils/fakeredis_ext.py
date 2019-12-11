@@ -70,6 +70,17 @@ class FakeStrictRedisWithConnection(FakeStrictRedis):
         return self._parse_command_response(cmd, args)
 
     def _parse_command_response(self, cmd, args):
+        """TODO (JP) I'm not 100% sure why we are overriding the parse_response code on this class (which is what
+        ultimately leads us to here) but after moving to a newer version of fakeredis, our old code here would
+        cause an "RuntimeError: maximum recursion depth exceeded" error because cmd_func would lead us right back
+        to this method again.
+
+        Using a new FakeRedis client (which will _not_ call _parse_command_response) seems to work but there is
+        probably a better solution to this problem.
+
+        I'm also unsure why ZADD needs to be modified but it probably has to do with some change in the FakeRedis code
+        that we are overriding here.
+        """
         new_client = FakeStrictRedis(server=self.server)
         cmd_func = getattr(new_client, cmd.lower())
         if cmd == "ZADD":
