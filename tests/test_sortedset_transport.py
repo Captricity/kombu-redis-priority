@@ -13,25 +13,77 @@ from kombu.five import Empty
 from kombu_redis_priority.transport.redis_priority_async import redis, Transport
 
 
+
+# class AbstractMockRedisTestCaseMixin(object):
+#     """This "mixin" is used to mock out Redis in all tests within the test class that uses it.
+
+#     It allows a user to mock out mutliple redis paths if need be. Classes that inherit from this class need to
+#     define a get_redis_paths class method which returns the redis paths to mock.
+#     """
+
+#     @classmethod
+#     def mock_redis(cls, fake_redis):
+#         mocks = [mock.patch(path, return_value=fake_redis) for path in cls.get_redis_paths()]
+#         return nested_context_managers(*mocks)
+
+#     @classmethod
+#     def setUpClass(cls):
+#         """This is needed to mock out Redis in the setupTestData method."""
+#         fake_redis = get_fake_redis()
+#         with cls.mock_redis(fake_redis):
+#             super(AbstractMockRedisTestCaseMixin, cls).setUpClass()
+
+#     def run(self, *args, **kwargs):
+#         """Run is called before each test."""
+#         fake_redis = get_fake_redis()
+#         with self.mock_redis(fake_redis):
+#             return_value = super(AbstractMockRedisTestCaseMixin, self).run(*args, **kwargs)
+
+#         fake_redis.flushall()
+#         return return_value
+
+#     @classmethod
+#     def get_redis_paths(cls):
+#         raise NotImplementedError("Need to define get_redis_paths on base classes.")
+
+
+# class MockRedisTestCaseMixin(AbstractMockRedisTestCaseMixin):
+
+#     REDIS_PATHS_TO_MOCK = (
+#         "captsule.utils.redis_utils.get_redis_connection",
+#     )
+
+#     @classmethod
+#     def get_redis_paths(cls):
+#         return cls.REDIS_PATHS_TO_MOCK[:]
+
+from fakeredis import FakeStrictRedis, FakeServer
+
+
 class TestSortedSetTransport(unittest.TestCase):
+
     def setUp(self):
-        self.faker = FakeStrictRedisWithConnection()
-        with mock.patch.object(redis, 'StrictRedis', FakeStrictRedisWithConnection):
+        self.server = FakeServer()
+        self.faker = FakeStrictRedisWithConnection(server=self.server)
+        with mock.patch("kombu_redis_priority.transport.redis_priority_async.redis.StrictRedis", return_value=self.faker):
+        #with mock.patch.object(redis, 'StrictRedis', FakeStrictRedis):
             self.connection = self.create_connection()
+            #self.faker.connection = self.connection
             self.channel = self.connection.default_channel
 
-    def tearDown(self):
-        self.faker.flushall()
+    # def tearDown(self):
+    #     self.faker.flushall()
 
     def create_connection(self):
+        #from fakeredis import Fak
         return Connection(transport=Transport)
 
     def _prefixed_message(self, time_, msg_obj):
         return six.b('{:011d}:'.format(int(time_)) + json.dumps(msg_obj))
 
+    # good with regular fake redis
     def test_default_message_add(self):
-        raw_db = self.faker._db
-
+        raw_db = self.server.dbs[0]
         # assert no queues exist
         self.assertEqual(len(raw_db), 0)
 
@@ -44,18 +96,21 @@ class TestSortedSetTransport(unittest.TestCase):
         self.assertEqual(len(raw_db), 1)
 
         # ... and verify queue has a message
-        raw_queue = raw_db['foo']
+        raw_queue = raw_db['foo'].value.items()
+
         self.assertEqual(len(raw_queue), 1)
 
         # verify message:
         # - a time prefix is appended to the message
         # - has default priority of +inf
-        enqueued_msg, priority = next(six.iteritems(raw_queue))
+        # enqueued_msg, priority = next(six.iteritems(raw_queue))
+        enqueued_msg, priority = raw_queue[0]
         self.assertEqual(enqueued_msg, self._prefixed_message(faketime, {}))
         self.assertEqual(priority, float('+inf'))
 
+    # good with regular fake redis
     def test_prioritized_message_add(self):
-        raw_db = self.faker._db
+        raw_db = self.server.dbs[0]
         msg = {'properties': {'zpriority': 5}}
 
         # assert no queues exist
@@ -70,13 +125,14 @@ class TestSortedSetTransport(unittest.TestCase):
         self.assertEqual(len(raw_db), 1)
 
         # ... and verify queue has a message
-        raw_queue = raw_db['foo']
+        raw_queue = raw_db['foo'].value.items()
+
         self.assertEqual(len(raw_queue), 1)
 
         # verify message:
         # - a time prefix is appended to the message
         # - has default priority (0)
-        enqueued_msg, priority = next(six.iteritems(raw_queue))
+        enqueued_msg, priority = raw_queue[0]
         self.assertEqual(enqueued_msg, self._prefixed_message(faketime, msg))
         self.assertEqual(priority, 5.0)
 
@@ -85,20 +141,26 @@ class TestSortedSetTransport(unittest.TestCase):
         msg = {
             'properties': {'delivery_tag': 'abcd'}
         }
-        self.faker.zadd('foo', 1, self._prefixed_message(time.time(), msg))
+        # import ipdb
+        # ipdb.set_trace()
+        #with mock.patch("tests.utils.fakeredis_ext._sconnection.read_response", return_value=1):
+        self.faker.zadd('foo', {self._prefixed_message(time.time(), msg): 1})
 
         # Make the channel pull off the foo queue
         self.channel._active_queues.append('foo')
         self.channel._update_queue_schedule()
 
         # And then try the zrem pipeline
+        #with mock.patch.object(self.faker, "connection", self.connection):
         self.channel._zrem_start()
         with mock.patch.object(self.channel.connection, '_deliver') as mock_deliver:
+            #with mock.patch("tests.utils.fakeredis_ext._sconnection.read_response", return_value=[[2]]):
             self.channel._zrem_read()
             mock_deliver.assert_called_once_with(msg, 'foo')
 
+    # good with regular fake redis
     def test_purge(self):
-        raw_db = self.faker._db
+        raw_db = self.server.dbs[0]
 
         # assert no queues exist
         self.assertEqual(len(raw_db), 0)
@@ -113,6 +175,7 @@ class TestSortedSetTransport(unittest.TestCase):
         self.assertEqual(num_msg, 1)
         self.assertEqual(len(raw_db), 0)
 
+    # good with regular fake redis
     def test_size(self):
         size = self.channel._size('foo')
         # verify that there are no messages
@@ -126,6 +189,7 @@ class TestSortedSetTransport(unittest.TestCase):
         # verify that there are two messages
         self.assertEqual(size, 2)
 
+    # good with regular fake redis
     def test_has_queue(self):
         # put two blank messages
         self.channel._put('foo', {})
@@ -139,8 +203,8 @@ class TestSortedSetTransport(unittest.TestCase):
             'properties': {'delivery_tag': 'abcd'}
         }
         for i in range(2):
-            self.faker.zadd('foo', i, self._prefixed_message(time.time() + i, msg))
-            self.faker.zadd('bar', i, self._prefixed_message(time.time() + i, msg))
+            self.faker.zadd('foo', {self._prefixed_message(time.time() + i, msg): i})
+            self.faker.zadd('bar', {self._prefixed_message(time.time() + i, msg): i})
 
         self.channel._queue_scheduler.update(['foo', 'bar'])
 
@@ -164,7 +228,9 @@ class TestSortedSetTransport(unittest.TestCase):
             1: ['1985', '1955', '2015'],
             2: ['Marty']
         }
-        with mock.patch.object(redis, 'StrictRedis', FakeStrictRedisWithConnection):
+        self.server = FakeServer()
+        self.faker = FakeStrictRedisWithConnection(server=self.server)
+        with mock.patch("kombu_redis_priority.transport.redis_priority_async.redis.StrictRedis", return_value=self.faker):
             connection = Connection(
                 transport=Transport,
                 transport_options={
@@ -177,7 +243,7 @@ class TestSortedSetTransport(unittest.TestCase):
         msg = {
             'properties': {'delivery_tag': 'abcd'}
         }
-        self.faker.zadd('1955', 1, self._prefixed_message(time.time(), msg))
+        self.faker.zadd('1955', {self._prefixed_message(time.time(), msg): 1})
 
         # Then check to make sure that scheduler will fully rotate levels 0 and 1, but not 2
         def check_zrem_pipeline(queue, empty):
@@ -206,7 +272,9 @@ class TestSortedSetTransport(unittest.TestCase):
         }
         weight = 0.7
         rr_queues = ['1985', '1955']
-        with mock.patch.object(redis, 'StrictRedis', FakeStrictRedisWithConnection):
+        self.server = FakeServer()
+        self.faker = FakeStrictRedisWithConnection(server=self.server)
+        with mock.patch("kombu_redis_priority.transport.redis_priority_async.redis.StrictRedis", return_value=self.faker):
             connection = Connection(
                 transport=Transport,
                 transport_options={

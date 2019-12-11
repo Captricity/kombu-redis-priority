@@ -571,7 +571,8 @@ class Channel(virtual.Channel):
         pipe = self.client.pipeline()
         pipe.zrange(queue, 0, 0)
         pipe.zremrangebyrank(queue, 0, 0)
-
+        # import ipdb
+        # ipdb.set_trace()
         # Hack to make call asynchronous
         connection = self.client.connection
         # Wrap pipeline commands in MULTI/EXEC so that they are executed
@@ -581,6 +582,8 @@ class Channel(virtual.Channel):
         connection.send_packed_command(all_cmds)
 
     def _zrem_read(self, **options):
+        # import ipdb
+        # ipdb.set_trace()
         try:
             try:
                 # The last response contains the response of ZRANGE.

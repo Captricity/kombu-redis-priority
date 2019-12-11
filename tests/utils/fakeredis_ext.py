@@ -2,7 +2,7 @@
 
 from collections import deque
 from itertools import count
-from fakeredis import FakeStrictRedis, FakePipeline
+from fakeredis import FakeStrictRedis
 
 
 class FakeStrictRedisWithConnection(FakeStrictRedis):
@@ -16,8 +16,18 @@ class FakeStrictRedisWithConnection(FakeStrictRedis):
     def __init__(self, *args, **kwargs):
         super(FakeStrictRedisWithConnection, self).__init__(*args, **kwargs)
         self._connection = None
-        self.connection = self._sconnection(self)
+        self.connection = _sconnection(self)
         self._response_queue = deque()
+        self.server = kwargs["server"]
+
+    # def ping(self):
+    #     print("ping")
+
+    # def zadd(self, *args, **kwargs):
+    #     print("zadd")
+    #     new_client = FakeStrictRedis(server=self.server)
+    #     return new_client.zadd(*args, **kwargs)
+    #     #return super(FakeStrictRedisWithConnection, self).zadd(*args, **kwargs)
 
     def parse_response(self, connection, type, **options):
         # If there are any responses queued up, pop and return that
@@ -51,7 +61,8 @@ class FakeStrictRedisWithConnection(FakeStrictRedis):
 
         # It is a bug, if the command stack is NOT empty at this point
         assert len(self.connection._sock.data) == 0
-
+        print("cmds_to_execute")
+        print(cmds_to_execute)
         # execute those collected commands and construct response list
         responses = [self._parse_command_response(cmd, args) for cmd, args in cmds_to_execute]
 
@@ -62,61 +73,97 @@ class FakeStrictRedisWithConnection(FakeStrictRedis):
         return 'OK'
 
     def _parse_command_response_from_connection(self, connection, type):
+        print("_parse_command_response_from_connection")
+        # import ipdb
+        # ipdb.set_trace()
         cmd, args = self.connection._sock.data.pop()
+        print("cmd: {}".format(cmd))
+        print("args: {}".format(args))
         assert cmd == type
         assert len(self.connection._sock.data) == 0
         return self._parse_command_response(cmd, args)
 
+    # def _parse_command_response(self, cmd, args):
+    #     print('_parse_command_response')
+    #     # import ipdb
+    #     # ipdb.set_trace()
+    #     cmd_func = getattr(self, cmd.lower())
+    #     # if cmd == "ZADD":
+    #     #     args = (args[0], {args[2]: args[1]})
+    #     print("cmd: {}".format(cmd))
+    #     print("args: {}".format(args))
+
+    #     return cmd_func(*args)
+
     def _parse_command_response(self, cmd, args):
-        cmd_func = getattr(self, cmd.lower())
+        print('NEWEST_parse_command_response')
+        # import ipdb
+        # ipdb.set_trace()
+        new_client = FakeStrictRedis(server=self.server)
+        cmd_func = getattr(new_client, cmd.lower())
+        if cmd == "ZADD":
+            args = (args[0], {args[2]: args[1]})
+        print("cmd: {}".format(cmd))
+        print("args: {}".format(args))
+
         return cmd_func(*args)
 
-    def pipeline(self, transaction=True):
-        return FakePipelineWithStack(self, transaction)
-
-    class _sconnection(object):
-        disconnected = False
-
-        class _socket(object):
-            blocking = True
-            filenos = count(30)
-
-            def __init__(self, *args):
-                self._fileno = next(self.filenos)
-                self.data = []
-
-            def fileno(self):
-                return self._fileno
-
-            def setblocking(self, blocking):
-                self.blocking = blocking
-
-        def __init__(self, client):
-            self.client = client
-            self._sock = self._socket()
-
-        def disconnect(self):
-            self.disconnected = True
-
-        def send_command(self, cmd, *args):
-            self._sock.data.append((cmd, args))
-
-        def pack_commands(self, cmds):
-            return cmds  # do nothing
-
-        def send_packed_command(self, all_cmds):
-            # Input command format is: tuple(tuple(cmd, arg0, arg1, ...), options)
-            # The injected command format has to be equivalent to `send_command`: tuple(cmd, args)
-            def normalize_command(raw_cmd):
-                return (raw_cmd[0], raw_cmd[1:])
-            self._sock.data.extend([normalize_command(cmd) for cmd in all_cmds])
+    # def pipeline(self, transaction=True):
+    #     return FakePipelineWithStack(self, transaction)
 
 
-class FakePipelineWithStack(FakePipeline):
-    @property
-    def command_stack(self):
+class _sconnection(object):
+    disconnected = False
+
+    class _socket(object):
+        blocking = True
+        filenos = count(30)
+
+        def __init__(self, *args):
+            self._fileno = next(self.filenos)
+            self.data = []
+
+        def fileno(self):
+            return self._fileno
+
+        def setblocking(self, blocking):
+            self.blocking = blocking
+
+    def __init__(self, client):
+        self.client = client
+        self._sock = self._socket()
+
+    def disconnect(self):
+        self.disconnected = True
+
+    def send_command(self, cmd, *args):
+        self._sock.data.append((cmd, args))
+
+    def pack_commands(self, cmds):
+        return cmds  # do nothing
+
+    def send_packed_command(self, all_cmds):
+        # Input command format is: tuple(tuple(cmd, arg0, arg1, ...), options)
+        # The injected command format has to be equivalent to `send_command`: tuple(cmd, args)
         def normalize_command(raw_cmd):
-            cmd, args, kwargs = raw_cmd
-            return ((cmd,) + args, kwargs)
+            return (raw_cmd[0], raw_cmd[1:])
+        self._sock.data.extend([normalize_command(cmd) for cmd in all_cmds])
 
-        return [normalize_command(cmd) for cmd in self.commands]
+    # def read_response(self, *args, **kwargs):
+    #     import ipdb
+    #     ipdb.set_trace()
+    #     print("read_response")
+    #     print(args)
+    #     print("============")
+    #     print(kwargs)
+    #     print("=============================")
+    #     return [1]
+
+# class FakePipelineWithStack(FakePipeline):
+#     @property
+#     def command_stack(self):
+#         def normalize_command(raw_cmd):
+#             cmd, args, kwargs = raw_cmd
+#             return ((cmd,) + args, kwargs)
+
+#         return [normalize_command(cmd) for cmd in self.commands]
