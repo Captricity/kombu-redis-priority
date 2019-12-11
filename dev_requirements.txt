@@ -1,3 +1,2 @@
 Sphinx
 bumpversion
-mock

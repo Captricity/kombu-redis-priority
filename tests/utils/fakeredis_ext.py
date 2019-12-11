@@ -97,6 +97,7 @@ class FakeStrictRedisWithConnection(FakeStrictRedis):
         def __init__(self, client):
             self.client = client
             self._sock = self._socket()
+            self.pid = 1234
 
         def disconnect(self):
             self.disconnected = True

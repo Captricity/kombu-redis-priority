@@ -21,9 +21,6 @@ class TestSortedSetTransport(unittest.TestCase):
         self.fake_redis = FakeStrictRedisWithConnection(server=self.fake_redis_server)
         self.connection, self.channel = self.create_connection_and_channel(self.fake_redis, transport=Transport)
 
-    def create_connection(self):
-        return Connection(transport=Transport)
-
     def create_connection_and_channel(self, fake_redis, *args, **kwargs):
         path = "kombu_redis_priority.transport.redis_priority_async.redis.StrictRedis"
         with mock.patch(path, return_value=fake_redis):
@@ -35,6 +32,8 @@ class TestSortedSetTransport(unittest.TestCase):
         return six.b('{:011d}:'.format(int(time_)) + json.dumps(msg_obj))
 
     def test_default_message_add(self):
+        # import ipdb
+        # ipdb.set_trace()
         raw_db = self.fake_redis_server.dbs[0]
         # assert no queues exist
         self.assertEqual(len(raw_db), 0)
@@ -48,14 +47,14 @@ class TestSortedSetTransport(unittest.TestCase):
         self.assertEqual(len(raw_db), 1)
 
         # ... and verify queue has a message
-        raw_queue = raw_db['foo'].value.items()
+        raw_queue = dict(raw_db[b'foo'].value.items())
 
         self.assertEqual(len(raw_queue), 1)
 
         # verify message:
         # - a time prefix is appended to the message
         # - has default priority of +inf
-        enqueued_msg, priority = raw_queue[0]
+        enqueued_msg, priority = list(raw_queue.items())[0]
         self.assertEqual(enqueued_msg, self._prefixed_message(faketime, {}))
         self.assertEqual(priority, float('+inf'))
 
@@ -75,14 +74,14 @@ class TestSortedSetTransport(unittest.TestCase):
         self.assertEqual(len(raw_db), 1)
 
         # ... and verify queue has a message
-        raw_queue = raw_db['foo'].value.items()
+        raw_queue = dict(raw_db[b'foo'].value.items())
 
         self.assertEqual(len(raw_queue), 1)
 
         # verify message:
         # - a time prefix is appended to the message
         # - has default priority (0)
-        enqueued_msg, priority = raw_queue[0]
+        enqueued_msg, priority = list(raw_queue.items())[0]
         self.assertEqual(enqueued_msg, self._prefixed_message(faketime, msg))
         self.assertEqual(priority, 5.0)
 
