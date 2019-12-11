@@ -319,6 +319,7 @@ class Channel(virtual.Channel):
         if not self.ack_emulation:  # disable visibility timeout
             self.QoS = virtual.QoS
 
+        print("========================================queue_order_strategy: {}".format(self.queue_order_strategy))
         if self.queue_order_strategy == 'round_robin':
             self._queue_scheduler = RoundRobinQueueScheduler()
         elif self.queue_order_strategy == 'prioritized_levels':
