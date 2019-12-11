@@ -63,8 +63,8 @@ from fakeredis import FakeStrictRedis, FakeServer
 class TestSortedSetTransport(unittest.TestCase):
 
     def setUp(self):
-        self.server = FakeServer()
-        self.faker = FakeStrictRedisWithConnection(server=self.server)
+        self.fake_redis_server = FakeServer()
+        self.faker = FakeStrictRedisWithConnection(server=self.fake_redis_server)
         with mock.patch("kombu_redis_priority.transport.redis_priority_async.redis.StrictRedis", return_value=self.faker):
         #with mock.patch.object(redis, 'StrictRedis', FakeStrictRedis):
             self.connection = self.create_connection()
@@ -75,7 +75,6 @@ class TestSortedSetTransport(unittest.TestCase):
     #     self.faker.flushall()
 
     def create_connection(self):
-        #from fakeredis import Fak
         return Connection(transport=Transport)
 
     def _prefixed_message(self, time_, msg_obj):
@@ -83,7 +82,7 @@ class TestSortedSetTransport(unittest.TestCase):
 
     # good with regular fake redis
     def test_default_message_add(self):
-        raw_db = self.server.dbs[0]
+        raw_db = self.fake_redis_server.dbs[0]
         # assert no queues exist
         self.assertEqual(len(raw_db), 0)
 
@@ -110,7 +109,7 @@ class TestSortedSetTransport(unittest.TestCase):
 
     # good with regular fake redis
     def test_prioritized_message_add(self):
-        raw_db = self.server.dbs[0]
+        raw_db = self.fake_redis_server.dbs[0]
         msg = {'properties': {'zpriority': 5}}
 
         # assert no queues exist
@@ -141,9 +140,6 @@ class TestSortedSetTransport(unittest.TestCase):
         msg = {
             'properties': {'delivery_tag': 'abcd'}
         }
-        # import ipdb
-        # ipdb.set_trace()
-        #with mock.patch("tests.utils.fakeredis_ext._sconnection.read_response", return_value=1):
         self.faker.zadd('foo', {self._prefixed_message(time.time(), msg): 1})
 
         # Make the channel pull off the foo queue
@@ -151,16 +147,14 @@ class TestSortedSetTransport(unittest.TestCase):
         self.channel._update_queue_schedule()
 
         # And then try the zrem pipeline
-        #with mock.patch.object(self.faker, "connection", self.connection):
         self.channel._zrem_start()
         with mock.patch.object(self.channel.connection, '_deliver') as mock_deliver:
-            #with mock.patch("tests.utils.fakeredis_ext._sconnection.read_response", return_value=[[2]]):
             self.channel._zrem_read()
             mock_deliver.assert_called_once_with(msg, 'foo')
 
     # good with regular fake redis
     def test_purge(self):
-        raw_db = self.server.dbs[0]
+        raw_db = self.fake_redis_server.dbs[0]
 
         # assert no queues exist
         self.assertEqual(len(raw_db), 0)

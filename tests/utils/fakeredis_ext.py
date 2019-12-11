@@ -1,4 +1,4 @@
-""" Extensions for fakeredis, namely adding connection interface that is used by kombu """
+"""Extensions for fakeredis, namely adding connection interface that is used by kombu"""
 
 from collections import deque
 from itertools import count
@@ -13,21 +13,13 @@ class FakeStrictRedisWithConnection(FakeStrictRedis):
 
     You can learn more about it in the kombu source for the redis transport.
     """
+
     def __init__(self, *args, **kwargs):
         super(FakeStrictRedisWithConnection, self).__init__(*args, **kwargs)
         self._connection = None
         self.connection = _sconnection(self)
         self._response_queue = deque()
         self.server = kwargs["server"]
-
-    # def ping(self):
-    #     print("ping")
-
-    # def zadd(self, *args, **kwargs):
-    #     print("zadd")
-    #     new_client = FakeStrictRedis(server=self.server)
-    #     return new_client.zadd(*args, **kwargs)
-    #     #return super(FakeStrictRedisWithConnection, self).zadd(*args, **kwargs)
 
     def parse_response(self, connection, type, **options):
         # If there are any responses queued up, pop and return that
@@ -108,9 +100,6 @@ class FakeStrictRedisWithConnection(FakeStrictRedis):
 
         return cmd_func(*args)
 
-    # def pipeline(self, transaction=True):
-    #     return FakePipelineWithStack(self, transaction)
-
 
 class _sconnection(object):
     disconnected = False
@@ -148,22 +137,3 @@ class _sconnection(object):
         def normalize_command(raw_cmd):
             return (raw_cmd[0], raw_cmd[1:])
         self._sock.data.extend([normalize_command(cmd) for cmd in all_cmds])
-
-    # def read_response(self, *args, **kwargs):
-    #     import ipdb
-    #     ipdb.set_trace()
-    #     print("read_response")
-    #     print(args)
-    #     print("============")
-    #     print(kwargs)
-    #     print("=============================")
-    #     return [1]
-
-# class FakePipelineWithStack(FakePipeline):
-#     @property
-#     def command_stack(self):
-#         def normalize_command(raw_cmd):
-#             cmd, args, kwargs = raw_cmd
-#             return ((cmd,) + args, kwargs)
-
-#         return [normalize_command(cmd) for cmd in self.commands]
