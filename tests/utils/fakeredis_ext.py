@@ -17,7 +17,7 @@ class FakeStrictRedisWithConnection(FakeStrictRedis):
     def __init__(self, *args, **kwargs):
         super(FakeStrictRedisWithConnection, self).__init__(*args, **kwargs)
         self._connection = None
-        self.connection = _sconnection(self)
+        self.connection = self._sconnection(self)
         self._response_queue = deque()
         self.server = kwargs["server"]
 
@@ -77,40 +77,39 @@ class FakeStrictRedisWithConnection(FakeStrictRedis):
 
         return cmd_func(*args)
 
+    class _sconnection(object):
+        disconnected = False
 
-class _sconnection(object):
-    disconnected = False
+        class _socket(object):
+            blocking = True
+            filenos = count(30)
 
-    class _socket(object):
-        blocking = True
-        filenos = count(30)
+            def __init__(self, *args):
+                self._fileno = next(self.filenos)
+                self.data = []
 
-        def __init__(self, *args):
-            self._fileno = next(self.filenos)
-            self.data = []
+            def fileno(self):
+                return self._fileno
 
-        def fileno(self):
-            return self._fileno
+            def setblocking(self, blocking):
+                self.blocking = blocking
 
-        def setblocking(self, blocking):
-            self.blocking = blocking
+        def __init__(self, client):
+            self.client = client
+            self._sock = self._socket()
 
-    def __init__(self, client):
-        self.client = client
-        self._sock = self._socket()
+        def disconnect(self):
+            self.disconnected = True
 
-    def disconnect(self):
-        self.disconnected = True
+        def send_command(self, cmd, *args):
+            self._sock.data.append((cmd, args))
 
-    def send_command(self, cmd, *args):
-        self._sock.data.append((cmd, args))
+        def pack_commands(self, cmds):
+            return cmds  # do nothing
 
-    def pack_commands(self, cmds):
-        return cmds  # do nothing
-
-    def send_packed_command(self, all_cmds):
-        # Input command format is: tuple(tuple(cmd, arg0, arg1, ...), options)
-        # The injected command format has to be equivalent to `send_command`: tuple(cmd, args)
-        def normalize_command(raw_cmd):
-            return (raw_cmd[0], raw_cmd[1:])
-        self._sock.data.extend([normalize_command(cmd) for cmd in all_cmds])
+        def send_packed_command(self, all_cmds):
+            # Input command format is: tuple(tuple(cmd, arg0, arg1, ...), options)
+            # The injected command format has to be equivalent to `send_command`: tuple(cmd, args)
+            def normalize_command(raw_cmd):
+                return (raw_cmd[0], raw_cmd[1:])
+            self._sock.data.extend([normalize_command(cmd) for cmd in all_cmds])

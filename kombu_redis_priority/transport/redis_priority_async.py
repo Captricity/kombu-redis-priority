@@ -569,6 +569,7 @@ class Channel(virtual.Channel):
         pipe = self.client.pipeline()
         pipe.zrange(queue, 0, 0)
         pipe.zremrangebyrank(queue, 0, 0)
+
         # Hack to make call asynchronous
         connection = self.client.connection
         # Wrap pipeline commands in MULTI/EXEC so that they are executed

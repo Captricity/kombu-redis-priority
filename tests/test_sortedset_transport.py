@@ -34,7 +34,6 @@ class TestSortedSetTransport(unittest.TestCase):
     def _prefixed_message(self, time_, msg_obj):
         return six.b('{:011d}:'.format(int(time_)) + json.dumps(msg_obj))
 
-    # good with regular fake redis
     def test_default_message_add(self):
         raw_db = self.fake_redis_server.dbs[0]
         # assert no queues exist
@@ -56,12 +55,10 @@ class TestSortedSetTransport(unittest.TestCase):
         # verify message:
         # - a time prefix is appended to the message
         # - has default priority of +inf
-        # enqueued_msg, priority = next(six.iteritems(raw_queue))
         enqueued_msg, priority = raw_queue[0]
         self.assertEqual(enqueued_msg, self._prefixed_message(faketime, {}))
         self.assertEqual(priority, float('+inf'))
 
-    # good with regular fake redis
     def test_prioritized_message_add(self):
         raw_db = self.fake_redis_server.dbs[0]
         msg = {'properties': {'zpriority': 5}}
@@ -106,7 +103,6 @@ class TestSortedSetTransport(unittest.TestCase):
             self.channel._zrem_read()
             mock_deliver.assert_called_once_with(msg, 'foo')
 
-    # good with regular fake redis
     def test_purge(self):
         raw_db = self.fake_redis_server.dbs[0]
 
@@ -123,7 +119,6 @@ class TestSortedSetTransport(unittest.TestCase):
         self.assertEqual(num_msg, 1)
         self.assertEqual(len(raw_db), 0)
 
-    # good with regular fake redis
     def test_size(self):
         size = self.channel._size('foo')
         # verify that there are no messages
@@ -137,7 +132,6 @@ class TestSortedSetTransport(unittest.TestCase):
         # verify that there are two messages
         self.assertEqual(size, 2)
 
-    # good with regular fake redis
     def test_has_queue(self):
         # put two blank messages
         self.channel._put('foo', {})
