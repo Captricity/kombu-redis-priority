@@ -1,8 +1,8 @@
-""" Extensions for fakeredis, namely adding connection interface that is used by kombu """
+"""Extensions for fakeredis, namely adding connection interface that is used by kombu"""
 
 from collections import deque
 from itertools import count
-from fakeredis import FakeStrictRedis, FakePipeline
+from fakeredis import FakeStrictRedis
 
 
 class FakeStrictRedisWithConnection(FakeStrictRedis):
@@ -13,11 +13,13 @@ class FakeStrictRedisWithConnection(FakeStrictRedis):
 
     You can learn more about it in the kombu source for the redis transport.
     """
+
     def __init__(self, *args, **kwargs):
         super(FakeStrictRedisWithConnection, self).__init__(*args, **kwargs)
         self._connection = None
         self.connection = self._sconnection(self)
         self._response_queue = deque()
+        self.server = kwargs["server"]
 
     def parse_response(self, connection, type, **options):
         # If there are any responses queued up, pop and return that
@@ -68,11 +70,23 @@ class FakeStrictRedisWithConnection(FakeStrictRedis):
         return self._parse_command_response(cmd, args)
 
     def _parse_command_response(self, cmd, args):
-        cmd_func = getattr(self, cmd.lower())
-        return cmd_func(*args)
+        """TODO (JP) I'm not 100% sure why we are overriding the parse_response code on this class (which is what
+        ultimately leads us to here) but after moving to a newer version of fakeredis, our old code here would
+        cause an "RuntimeError: maximum recursion depth exceeded" error because cmd_func would lead us right back
+        to this method again.
 
-    def pipeline(self, transaction=True):
-        return FakePipelineWithStack(self, transaction)
+        Using a new FakeRedis client (which will _not_ call _parse_command_response) seems to work but there is
+        probably a better solution to this problem.
+
+        I'm also unsure why ZADD needs to be modified but it probably has to do with some change in the FakeRedis code
+        that we are overriding here.
+        """
+        new_client = FakeStrictRedis(server=self.server)
+        cmd_func = getattr(new_client, cmd.lower())
+        if cmd == "ZADD":
+            args = (args[0], {args[2]: args[1]})
+
+        return cmd_func(*args)
 
     class _sconnection(object):
         disconnected = False
@@ -94,6 +108,7 @@ class FakeStrictRedisWithConnection(FakeStrictRedis):
         def __init__(self, client):
             self.client = client
             self._sock = self._socket()
+            self.pid = 1234
 
         def disconnect(self):
             self.disconnected = True
@@ -110,13 +125,3 @@ class FakeStrictRedisWithConnection(FakeStrictRedis):
             def normalize_command(raw_cmd):
                 return (raw_cmd[0], raw_cmd[1:])
             self._sock.data.extend([normalize_command(cmd) for cmd in all_cmds])
-
-
-class FakePipelineWithStack(FakePipeline):
-    @property
-    def command_stack(self):
-        def normalize_command(raw_cmd):
-            cmd, args, kwargs = raw_cmd
-            return ((cmd,) + args, kwargs)
-
-        return [normalize_command(cmd) for cmd in self.commands]
