@@ -1,17 +1,14 @@
-from __future__ import unicode_literals
-
-import unittest
-import mock
 import freezegun
 import json
 import time
-import six
+import unittest
 
 from .utils.fakeredis_ext import FakeStrictRedisWithConnection
 from fakeredis import FakeServer
 from kombu import Connection
-from kombu.five import Empty
 from kombu_redis_priority.transport.redis_priority_async import Transport
+from queue import Empty
+from unittest import mock
 
 
 class TestSortedSetTransport(unittest.TestCase):
@@ -29,7 +26,7 @@ class TestSortedSetTransport(unittest.TestCase):
         return connection, channel
 
     def _prefixed_message(self, time_, msg_obj):
-        return six.b('{:011d}:'.format(int(time_)) + json.dumps(msg_obj))
+        return str.encode('{:011d}:'.format(int(time_)) + json.dumps(msg_obj))
 
     def test_default_message_add(self):
         raw_db = self.fake_redis_server.dbs[0]

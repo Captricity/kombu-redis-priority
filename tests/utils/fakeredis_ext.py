@@ -3,6 +3,8 @@
 from collections import deque
 from itertools import count
 from fakeredis import FakeStrictRedis
+from redis.retry import Retry
+from redis.backoff import NoBackoff
 
 
 class FakeStrictRedisWithConnection(FakeStrictRedis):
@@ -40,9 +42,9 @@ class FakeStrictRedisWithConnection(FakeStrictRedis):
         - QUEUED : acknowledges a command has been queued. There will be one per command sent.
         - LIST : list of responses
         """
-        # pop off the first command, which should be MULTI to signal start of transaction
         cmd = self.connection._sock.data.pop(0)
-        assert cmd[0] == 'MULTI'
+        if cmd[0] != 'MULTI':
+            raise AssertionError('first command should be "MULTI" to signal start of transaction')
 
         # Now extract all the commands until transaction ends
         cmds_to_execute = []
@@ -52,7 +54,8 @@ class FakeStrictRedisWithConnection(FakeStrictRedis):
             cmd = self.connection._sock.data.pop(0)
 
         # It is a bug, if the command stack is NOT empty at this point
-        assert len(self.connection._sock.data) == 0
+        if len(self.connection._sock.data) != 0:
+            raise AssertionError('potential bug - command stack is not empty')
 
         # execute those collected commands and construct response list
         responses = [self._parse_command_response(cmd, args) for cmd, args in cmds_to_execute]
@@ -63,10 +66,12 @@ class FakeStrictRedisWithConnection(FakeStrictRedis):
         self._response_queue.appendleft(responses)
         return 'OK'
 
-    def _parse_command_response_from_connection(self, connection, type):
+    def _parse_command_response_from_connection(self, connection, type_):
         cmd, args = self.connection._sock.data.pop()
-        assert cmd == type
-        assert len(self.connection._sock.data) == 0
+        if cmd != type_:
+            raise AssertionError('cmd does not match type_')
+        if len(self.connection._sock.data) != 0:
+            raise AssertionError('command stack not empty')
         return self._parse_command_response(cmd, args)
 
     def _parse_command_response(self, cmd, args):
@@ -109,6 +114,7 @@ class FakeStrictRedisWithConnection(FakeStrictRedis):
             self.client = client
             self._sock = self._socket()
             self.pid = 1234
+            self.retry = Retry(NoBackoff(), 0)
 
         def disconnect(self):
             self.disconnected = True
@@ -123,5 +129,5 @@ class FakeStrictRedisWithConnection(FakeStrictRedis):
             # Input command format is: tuple(tuple(cmd, arg0, arg1, ...), options)
             # The injected command format has to be equivalent to `send_command`: tuple(cmd, args)
             def normalize_command(raw_cmd):
-                return (raw_cmd[0], raw_cmd[1:])
+                return raw_cmd[0], raw_cmd[1:]
             self._sock.data.extend([normalize_command(cmd) for cmd in all_cmds])
