@@ -1,30 +1,27 @@
 """Redis transport backed by sortedset data structure."""
-from __future__ import absolute_import, unicode_literals
-
 import numbers
-from bisect import bisect
+
 from contextlib import contextmanager
 from itertools import chain
 from time import time, sleep
-
 from kombu import transport
-from vine import promise
-
-from kombu.exceptions import InconsistencyError, VersionMismatch
-from kombu.five import Empty, values, string_t
+from kombu.exceptions import VersionMismatch
 from kombu.log import get_logger
+from kombu.transport import virtual
+from kombu.transport.redis import (
+    get_redis_error_classes,
+    PRIORITY_STEPS,
+    _after_fork_cleanup_channel,
+    QoS,
+)
 from kombu.utils.compat import register_after_fork
 from kombu.utils.eventio import poll, READ, ERR
 from kombu.utils.encoding import bytes_to_str
 from kombu.utils.json import loads, dumps
 from kombu.utils.objects import cached_property
-from kombu.utils.scheduling import cycle_by_name
 from kombu.utils.url import _parse_url
-
-from kombu.transport.redis import NO_ROUTE_ERROR, get_redis_error_classes, PRIORITY_STEPS
-from kombu.transport.redis import _after_fork_cleanup_channel, QoS
-
-import kombu.transport.virtual as virtual
+from queue import Empty
+from vine import promise
 
 from ..scheduling.round_robin import RoundRobinQueueScheduler
 from ..scheduling.prioritized_levels import PrioritizedLevelsQueueScheduler
@@ -92,7 +89,7 @@ class MultiChannelPoller(object):
         self.after_read = set()
 
     def close(self):
-        for fd in values(self._chan_to_sock):
+        for fd in self._chan_to_sock.values():
             try:
                 self.poller.unregister(fd)
             except (KeyError, ValueError):
@@ -340,7 +337,7 @@ class Channel(virtual.Channel):
         self.handlers = {'ZREM': self._zrem_read, 'LISTEN': self._receive}
 
         if self.fanout_prefix:
-            if isinstance(self.fanout_prefix, string_t):
+            if isinstance(self.fanout_prefix, str):
                 self.keyprefix_fanout = self.fanout_prefix
         else:
             # previous versions did not set a fanout, so cannot enable
@@ -668,7 +665,7 @@ class Channel(virtual.Channel):
         with self.conn_or_acquire() as client:
             values = client.smembers(key)
             if not values:
-                raise InconsistencyError(NO_ROUTE_ERROR.format(exchange, key))
+                return []
             return [tuple(bytes_to_str(val).split(self.sep)) for val in values]
 
     def _purge(self, queue):

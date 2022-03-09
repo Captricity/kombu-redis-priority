@@ -1,2 +1,4 @@
 Sphinx
 bumpversion
+flake8
+bandit
