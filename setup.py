@@ -13,7 +13,8 @@ setup(
     keywords=['redis', 'sorted-set', 'kombu'],
     classifiers=[],
     install_requires=[
-        'kombu'
+        'kombu',
+        'importlib-metadata==4.13.0',
     ],
     tests_require=[
         'freezegun',
